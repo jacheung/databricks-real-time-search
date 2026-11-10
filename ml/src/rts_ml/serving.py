@@ -9,11 +9,22 @@ from databricks.sdk.service.serving import EndpointCoreConfigInput
 
 def ensure_endpoint(w, name: str, entity, route_optimized: bool) -> str:
     """Serve `entity` (a ServedEntityInput) on `name`; returns "created", "updated" or "unchanged"."""
-    if not any(e.name == name for e in w.serving_endpoints.list()):
+    def create():
         w.serving_endpoints.create(name=name, config=EndpointCoreConfigInput(name=name, served_entities=[entity]),
                                    route_optimized=route_optimized)
         return "created"
-    served = w.serving_endpoints.get(name).config.served_entities or []
+
+    if not any(e.name == name for e in w.serving_endpoints.list()):
+        return create()
+    endpoint = w.serving_endpoints.get(name)
+    if endpoint.config is None:  # never deployed: its first config is still building, or failed
+        if endpoint.state.config_update.value != "UPDATE_FAILED":
+            return "unchanged"  # wait_ready waits for it
+        # Nothing was ever served, so nothing is lost. 2026-11-10: the online store was purged and both L2
+        # endpoints were left like this.
+        w.serving_endpoints.delete(name)
+        return create()
+    served = endpoint.config.served_entities or []
     # scale_to_zero too: e2-demo-fe's cleanup bot turns it on overnight, and cold starts time L2 out.
     key = lambda s: (s.entity_name, s.entity_version, bool(s.scale_to_zero_enabled))  # noqa: E731
     if [key(s) for s in served] == [key(entity)]:

@@ -5,7 +5,7 @@ A box is ticked only when its check has passed on Databricks (`e2-demo-fe`, `mai
 Update this file, plus this track's one status line in the top-level file, at the end of every step.
 
 ## Open items
-- The session streaming pipeline (`b2e71ddb-8541-4ffa-8c4e-82ecbeca22da`) runs continuously; stop it when not testing.
+- The session streaming pipeline (`4303ea48-7c1b-41ba-b9dc-fb663e4966da`) runs continuously; stop it when not testing.
   Stopped 2026-11-01 (IDLE). Restart with `databricks pipelines start-update <id> -p e2-demo-fe` before freshness checks or the app.
 - `kafka_stream` replays history before `feature_views` materializes, so the session online tables hold only events
   produced after the pipeline started. Fine for probes and live traffic; revisit before the app demo (step 4).

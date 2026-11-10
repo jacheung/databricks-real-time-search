@@ -55,6 +55,9 @@ UC = CFG["unity_catalog"]
 # DBTITLE 1,User features: latest values
 # The user Feature Views' offline tables carry a generated suffix; find each one by the feature column it holds.
 views = [r["tableName"] for r in spark.sql(f"SHOW TABLES IN {UC['catalog']}.{UC['schema']} LIKE 'rts_user_offline_*_latest_view'").collect()]
+# Deleting a materialization drops its offline table but leaves this view behind (2026-11-10): skip the orphans.
+views = [v for v in views
+         if spark.catalog.tableExists(f"{UC['catalog']}.{UC['schema']}.{v.removesuffix('_latest_view')}")]
 by_feature = {}
 for v in views:
     name = f"{UC['catalog']}.{UC['schema']}.{v}"

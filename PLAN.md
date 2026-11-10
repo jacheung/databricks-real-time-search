@@ -37,15 +37,15 @@ its own branch in its own worktree, then merges into `main` there (`git merge rt
 
 | Resource | Owner | State |
 |---|---|---|
-| `rts-vs-endpoint` + `products_hybrid_idx` (Standard; bills hourly) | ml | ONLINE (kept overnight: the workspace is at its 500-endpoint quota) |
-| `rts-query-embedding` (T4, route-optimized) | ml | READY (recreated 2026-11-05 08:46) |
-| `rts-qac-l2` (CPU Medium, route-optimized, no scale-to-zero) | ml | READY (recreated 2026-11-05 08:46) |
-| Session pipeline `b2e71ddb-8541-4ffa-8c4e-82ecbeca22da` (continuous, Real-Time Mode → Lakebase session tables) | data | RUNNING (restarted 2026-11-05 08:38) |
+| `rts-vs-endpoint` + `products_hybrid_idx` (Standard; bills hourly) | ml | ONLINE (kept overnight: the workspace is at its 500-endpoint quota); index rebuilt 2026-11-09 after the cleanup bot deleted it again |
+| `rts-query-embedding` (T4, route-optimized) | ml | READY (2026-11-09) |
+| `rts-qac-l2` (CPU Medium, route-optimized, no scale-to-zero) | ml | READY (recreated 2026-11-10 12:15) |
+| Session pipeline `4303ea48-7c1b-41ba-b9dc-fb663e4966da` (continuous, Real-Time Mode → Lakebase session tables) | data | RUNNING (new 2026-11-10, after the online store purge; the old `b2e71ddb-…` is dead) |
 | Kafka ingestion pipeline `1fa949e7-2477-4306-9898-66f992328abf` (continuous, topic → `session_events_ingest`) | data | Stopped 2026-11-05 (end of day; was found running); only training/offline features need it, not the app |
 | Hourly user/item batch materializations (Feature Store-managed jobs, ~7 min/run, 6 jobs) | data | Running hourly. `update-materialized-feature --pipeline-schedule-state PAUSED` does **not** stop them (tested 2026-11-06 on `item_carts_7d`: the 07:00 UTC run still fired; restored to ACTIVE). `time_shift` runs them by hand (`run_now`) |
-| Lakebase `rts-online-store` (online store, QAC prefixes, demo scenarios) | data | Running (min 4 / max 8 CU, no auto-suspend: bills 24/7) |
-| App `rts-search` (MEDIUM compute; shared with a colleague, CAN_USE) | app | RUNNING (restarted 2026-11-05 08:38; bundle redeployed for CAN_QUERY) |
-| `rts-serp-l2` (T4, route-optimized; DCNv2) | ml | READY (recreated 2026-11-05 08:47) |
+| Lakebase `rts-online-store` (online store, QAC prefixes, demo scenarios) | data | Running: recreated 2026-11-10 as a Lakebase Autoscaling project (CU_1 → 4–8 CU, no scale-to-zero: bills 24/7) |
+| App `rts-search` (MEDIUM compute; shared with a colleague, CAN_USE) | app | RUNNING (restarted 2026-11-10 12:48 with `bundle run rts_app`; `grants_job` rerun) |
+| `rts-serp-l2` (T4, route-optimized; DCNv2) | ml | READY (recreated 2026-11-10 12:17) |
 | `rts-serp-l2-lgbm` (CPU, route-optimized; LightGBM comparator) | ml | Deleted 2026-11-04 after the benchmark |
 
 - **Stop billable resources when not testing (the user's rule).** Serving endpoints can't be stopped, only deleted
@@ -59,6 +59,15 @@ its own branch in its own worktree, then merges into `main` there (`git merge rt
   (~02:45 UTC). `scripts/pre_demo.sh` repairs both: it rebuilds a missing index (`serp_l1_ai_search`), and
   `ensure_endpoint` now treats scale-to-zero as a difference (turning it back off). Its checks fail on either. Lasting
   fix: an FE infra exception (go/feinfra-jira), not filed yet.
+- **2026-11-10: the same bot purged Lakebase `rts-online-store`** (`purge: true`, no restore) soon after the user
+  accepted a custodian recommendation to scale it to zero. **Never accept scale-to-zero on the online store**: online
+  stores don't support it. One shared store meant QAC L1, every online feature and the demo tables went at once. It
+  was recreated under the same name, so config and `app.yml` paths held, but nothing reattaches: materializations,
+  synced tables and grants are bound to the old instance's ID. Rebuild path that worked: delete and batch-recreate the
+  online materializations (`materialized-features:batchCreate`; for user/item, the offline one has to go too, which
+  drops its Delta table), `delete-synced-table` the three synced tables, rerun `qac_l1_lakebase`, `pre_demo.sh`,
+  `bundle run rts_app` (deploy alone doesn't restart a crashed app) and `grants_job`. Fixes from it: `ensure_endpoint`
+  recreates an endpoint whose first deploy failed; `demo_personas` skips orphaned `_latest_view`s.
 - Feature Store-managed pipelines and jobs don't appear in `databricks pipelines list-pipelines` or `jobs list`, and
   `pipeline_schedule_state: ACTIVE` doesn't mean the pipeline runs. Get their IDs from
   `databricks api get /api/2.0/feature-engineering/materialized-features/<id>` (the CLI command drops them).
@@ -67,7 +76,7 @@ its own branch in its own worktree, then merges into `main` there (`git merge rt
 - Kept on overnight: `rts-vs-endpoint` (quota) and Lakebase. The 6 synced-table pipelines are triggered and idle.
 
 **Pause at end of day:**
-1. `databricks pipelines stop b2e71ddb-8541-4ffa-8c4e-82ecbeca22da -p e2-demo-fe` (session)
+1. `databricks pipelines stop 4303ea48-7c1b-41ba-b9dc-fb663e4966da -p e2-demo-fe` (session)
 2. `databricks pipelines stop 1fa949e7-2477-4306-9898-66f992328abf -p e2-demo-fe` (ingestion)
 3. `databricks serving-endpoints delete rts-query-embedding -p e2-demo-fe`, `... delete rts-qac-l2 -p e2-demo-fe`, and `... delete rts-serp-l2 -p e2-demo-fe`
 4. `databricks apps stop rts-search -p e2-demo-fe` (this also cuts off anyone it's shared with)
@@ -86,7 +95,7 @@ What it runs, for doing a step by hand:
        `gte_large_en_v1_5_raw` on a T4, Express, ~5 min; no GPU logging needed)
      - `databricks bundle run serp_l2_job -t dev -p e2-demo-fe --only serp_l2_endpoint` (DCNv2 on a T4, ~7 min)
    - `databricks apps start rts-search -p e2-demo-fe`
-   - `databricks pipelines start-update b2e71ddb-8541-4ffa-8c4e-82ecbeca22da -p e2-demo-fe` (session; ~70 s to
+   - `databricks pipelines start-update 4303ea48-7c1b-41ba-b9dc-fb663e4966da -p e2-demo-fe` (session; ~70 s to
      RUNNING, then ~3 min to catch up on the backlog before Play works)
    - Ingestion only when regenerating training/offline data:
      `databricks pipelines start-update 1fa949e7-2477-4306-9898-66f992328abf -p e2-demo-fe`
