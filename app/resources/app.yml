@@ -39,6 +39,6 @@ resources:
         - name: serp-index
           description: SERP L1 hybrid index over products
           uc_securable:
-            securable_full_name: main.jon_cheung.products_hybrid_idx
+            securable_full_name: ${var.catalog}.${var.schema}.products_hybrid_idx
             securable_type: TABLE
             permission: SELECT

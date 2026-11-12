@@ -116,9 +116,9 @@ tables:                            # short names; full name is catalog.schema.<n
 
 kafka:                             # session events for sub-second streaming features (kafka_stream, feature_views, app)
   connection: your_rts_kafka         # UC Kafka connection; 02a creates it if missing
-  service_credential: your-msk-service-credential   # UC service credential for MSK IAM auth
-  bootstrap_servers: "b-1.your-msk.kafka.us-west-2.amazonaws.com:9198"
-  topic: your_rts_events             # kafka_stream creates it if missing
+  service_credential: your-msk-service-credential   # UC service credential for MSK IAM auth; data/scripts/create_msk.sh prints it
+  bootstrap_servers: "b-1.your-msk.kafka.us-west-2.amazonaws.com:9198"   # public SASL/IAM brokers; create_msk.sh prints them
+  topic: your_rts_events             # kafka_stream creates it if missing; one per workspace sharing a cluster
   partitions: 6
   stream: session_events_stream      # Feature Engineering Stream (catalog.schema.<name>) reading the topic
 

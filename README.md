@@ -85,7 +85,10 @@ can deploy on its own (and later under its own service principal).
 ## How to run
 
 1. Copy `shared/configs/example.yml` to `shared/configs/dev.yml` and fill it in. Notebooks run interactively read
-   `dev.yml`; jobs read `shared/configs/<bundle target>.yml`.
+   `dev.yml`; jobs read `shared/configs/<bundle target>.yml`. The `kafka` block needs an Amazon MSK cluster
+   (public brokers, IAM auth) and a UC service credential: `data/scripts/create_msk.sh` builds both and prints the
+   values (~1 h; ~$15/day, and MSK can't be stopped). Workspaces in the same region can share one cluster, each
+   with its own topic.
 2. Run the tests from this folder: `uv run --no-project --with pytest --with pyyaml python -m pytest -q`. Every
    notebook also ends with checks that assert, so a green run means its claim held.
 3. Deploy and run the data bundle:
@@ -155,3 +158,4 @@ repairs both and fails its checks on either.
 - `databricks bundle destroy -t dev -p <profile>` in each bundle folder removes the jobs, the app and uploaded files.
 - Tables in `<catalog>.<schema>`, the online store (Lakebase), the UC Kafka connection and the topic are kept.
   Drop them by hand if you're done with them.
+- `data/scripts/delete_msk.sh` deletes the MSK cluster and everything `create_msk.sh` built with it.

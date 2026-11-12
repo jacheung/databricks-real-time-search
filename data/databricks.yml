@@ -22,3 +22,7 @@ targets:
     default: true
     workspace:
       host: https://e2-demo-field-eng.cloud.databricks.com
+  fevm:
+    mode: development
+    workspace:
+      host: https://fevm-serverless-stable-jon-cheung.cloud.databricks.com

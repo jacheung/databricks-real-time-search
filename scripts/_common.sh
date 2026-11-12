@@ -5,6 +5,7 @@ cfg() {  # cfg '<python expression over c>' → value from the config
 }
 json() { python3 -c "import json, sys; d = json.load(sys.stdin); print($1)"; }
 P=$(cfg 'c["workspace"]["profile"]')
+TARGET=$(basename "$CONFIG" .yml)  # bundle target; jobs read shared/configs/<target>.yml
 SCHEMA_FQN=$(cfg 'c["unity_catalog"]["catalog"] + "." + c["unity_catalog"]["schema"]')
 ENDPOINTS=$(cfg '" ".join(c["models"][m]["endpoint"] for m in ("qac_l2", "query_embedding", "serp_l2"))')
 APP=rts-search  # app/resources/app.yml

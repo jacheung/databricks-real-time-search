@@ -20,9 +20,21 @@ sync:
 workspace:
   root_path: /Workspace/Users/${workspace.current_user.userName}/real-time-search/app
 
+variables:                           # must match unity_catalog in shared/configs/<target>.yml (bundles can't read it)
+  catalog:
+    default: main
+  schema:
+    default: jon_cheung
+
 targets:
   dev:
     mode: development
     default: true
     workspace:
       host: https://e2-demo-field-eng.cloud.databricks.com
+  fevm:
+    mode: development
+    workspace:
+      host: https://fevm-serverless-stable-jon-cheung.cloud.databricks.com
+    variables:
+      catalog: serverless_stable_jon_cheung_catalog

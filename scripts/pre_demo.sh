@@ -18,9 +18,9 @@ source scripts/_common.sh
 ml_endpoints() {
   cd ml
   local pids=() rc=0
-  databricks bundle run qac_l2_job -t dev -p "$P" --only qac_l2_endpoint & pids+=($!)
-  databricks bundle run retrieval_job -t dev -p "$P" --only serp_query_embedding & pids+=($!)
-  databricks bundle run serp_l2_job -t dev -p "$P" --only serp_l2_endpoint & pids+=($!)
+  databricks bundle run qac_l2_job -t "$TARGET" -p "$P" --only qac_l2_endpoint & pids+=($!)
+  databricks bundle run retrieval_job -t "$TARGET" -p "$P" --only serp_query_embedding & pids+=($!)
+  databricks bundle run serp_l2_job -t "$TARGET" -p "$P" --only serp_l2_endpoint & pids+=($!)
   for pid in "${pids[@]}"; do wait "$pid" || rc=1; done
   return $rc
 }
@@ -31,7 +31,7 @@ ensure_index() {
   local index
   index="$SCHEMA_FQN.$(cfg 'c["ai_search"]["index"]')"
   if databricks vector-search-indexes get-index "$index" -p "$P" >/dev/null 2>&1; then echo "$index exists"
-  else echo "$index missing: rebuilding"; cd ml && databricks bundle run retrieval_job -t dev -p "$P" --only serp_l1_ai_search; fi
+  else echo "$index missing: rebuilding"; cd ml && databricks bundle run retrieval_job -t "$TARGET" -p "$P" --only serp_l1_ai_search; fi
 }
 
 start_app() {
@@ -50,11 +50,11 @@ start_session_pipeline() {
 }
 
 demo_data() {
-  cd data && databricks bundle run demo_job -t dev -p "$P"
+  cd data && databricks bundle run demo_job -t "$TARGET" -p "$P"
 }
 
 app_deploy() {
-  cd app && databricks bundle deploy -t dev -p "$P"
+  cd app && databricks bundle deploy -t "$TARGET" -p "$P"
 }
 
 echo "1/3 Bring up endpoints, app, session pipeline; shift the history (profile $P)"
