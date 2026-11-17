@@ -50,8 +50,9 @@ from pyspark.sql import functions as F
 _nb_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
 ROOT = "/Workspace" + "/".join(_nb_path.split("/")[:-3])  # this notebook is <ROOT>/ml/notebooks/<name>
 sys.path[:0] = [f"{ROOT}/shared/src", f"{ROOT}/ml/src"]
-from rts_ml.qac_l2 import fit_ranker, slice_report
-from rts_ml.serp_l2 import MODEL_COLUMNS, model_matrix, ndcg_per_group
+from rts_ml.l2 import fit_ranker, slice_report
+from rts_ml.l2_training import training_features
+from rts_ml.serp_l2 import MODEL_COLUMNS, model_matrix, ndcg_per_group, unpack
 from rts_ml.serp_l2_dcn import fit_dcn, packed_ndcg, score
 from rts_ml.serp_l2_model import SerpLgbmRanker, SerpRanker
 from rts_shared.config import full_name, load_config, model_name, resolve_auto
@@ -125,13 +126,7 @@ print(f"best epoch {model.best_epoch}, valid NDCG@10 {model.best_valid_ndcg10:.4
 # DBTITLE 1,LightGBM LambdaRank comparator on the same matrix
 def rows(meta, x, y, mask):
     """Packed searches -> candidate rows (unpadded) with the matrix columns, label, L1 position and slices."""
-    g, pos = torch.nonzero(mask > 0, as_tuple=True)
-    out = pd.DataFrame(x[g, pos].numpy(), columns=list(MODEL_COLUMNS))
-    out["group_id"], out["label"], out["l1"] = meta["search_id"].values[g.numpy()], y[g, pos].numpy().astype(int), \
-        -(pos.numpy() + 1)
-    for s in SLICES:
-        out[s] = meta[s].values[g.numpy()]
-    return out
+    return unpack(meta, x.numpy(), y.numpy(), mask.numpy())
 
 
 as_matrix = lambda df: df[list(MODEL_COLUMNS)]
@@ -151,8 +146,7 @@ test["lgbm"] = ranker.predict(as_matrix(test))
 model_gpu = model.to(DEVICE)
 with torch.no_grad():
     dcn_packed = torch.cat([model_gpu(x_te[i:i + 256].to(DEVICE)).cpu() for i in range(0, len(x_te), 256)])
-g, pos = torch.nonzero(m_te > 0, as_tuple=True)
-test["dcn"] = dcn_packed[g, pos].numpy()
+test["dcn"] = dcn_packed.numpy()[m_te.numpy() > 0]  # the same row-major order as unpack
 model = model_gpu.cpu()
 
 per = lambda **cols: slice_report(test.assign(**cols), SLICES, per_group=ndcg_per_group, metrics=("ndcg",))
@@ -171,9 +165,9 @@ assert abs(packed_ndcg(dcn_packed, y_te, m_te) - overall["dcn_vs_l1"]["l2"]) < 1
 
 # COMMAND ----------
 
-# DBTITLE 1,TrainingSet for fe.log_model (same features as serp_l2_training_set)
-FEATURES = [fe.get_feature(full_name=full_name(CFG, n)) for n in [*feature_keys(CFG), *SERP_L2_REQUEST_COLUMNS]]
+# DBTITLE 1,TrainingSet for fe.log_model (training_features, as in serp_l2_training_set)
 spine = spark.table(SPINE)
+FEATURES = training_features(fe, CFG, feature_keys(CFG), spine, SERP_L2_REQUEST_COLUMNS)
 training_set = fe.create_training_set(df=spine, features=FEATURES, label="label", exclude_columns=[])
 
 # Raw Feature View rows for a few test searches, as the endpoint will see them (lookup keys stripped).
@@ -220,6 +214,8 @@ def run_version(name):
 
 version, lgbm_version = run_version(MODEL_NAME), run_version(LGBM_NAME)
 print(f"{MODEL_NAME} v{version}, {LGBM_NAME} v{lgbm_version} (run {run.info.run_id})")
+dbutils.jobs.taskValues.set("version", str(version))  # the endpoint tasks serve these versions
+dbutils.jobs.taskValues.set("lgbm_version", str(lgbm_version))
 
 # COMMAND ----------
 

@@ -40,6 +40,7 @@ resources:
             notebook_path: ../notebooks/l2_endpoint.py
             base_parameters:
               model_key: serp_l2
+              train_task: serp_l2_dcnv2
         - task_key: serp_l2_lgbm_endpoint   # temporary comparator: delete the endpoint after the latency run
           depends_on:
             - task_key: serp_l2_dcnv2
@@ -49,6 +50,7 @@ resources:
             base_parameters:
               model_key: serp_l2
               variant: lgbm
+              train_task: serp_l2_dcnv2
         - task_key: serp_l2_gpu_check
           environment_key: gpu
           compute:

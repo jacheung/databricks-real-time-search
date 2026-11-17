@@ -103,6 +103,12 @@ def shift_days(cfg: dict, first_event_date: date, today: date) -> int:
     return days
 
 
+def history_shift(history_last, labels_last):
+    """How far `time_shift` has moved `session_events` past the labels (`qac_impressions` and the impressions built with
+    it), from the latest event in each: 0 for a fresh `clickstream_sim` run. Training needs 0; see `time_shift.py`."""
+    return history_last - labels_last
+
+
 def window_strength(daily: list[tuple[date, float]]) -> dict:
     """A Count feature's per-day totals from its offline table, (window-end date, sum). Every full window holds about the
     same total, so a stale history shows as the latest window falling below the best day."""

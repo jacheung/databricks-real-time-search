@@ -7,8 +7,8 @@ import pandas as pd
 from rts_shared.config import load_config
 from rts_shared.features import feature_keys
 from rts_shared.retrieval import QAC_L2_REQUEST_COLUMNS
-from rts_ml.qac_l2 import (MODEL_COLUMNS, add_crosses, bootstrap_ci, fit_ranker, model_matrix, rank_metrics, score,
-                           slice_report)
+from rts_ml.l2 import bootstrap_ci, fit_ranker, slice_report
+from rts_ml.qac_l2 import MODEL_COLUMNS, add_crosses, fit_valid_split, model_matrix, rank_metrics, score
 
 
 def rows(**overrides):
@@ -76,9 +76,12 @@ def test_the_model_sees_numbers_only_never_brand_or_category_identities():
     assert not {"category", "brand", "sess_last_category", "sess_last_brand", "session_id", "user_id"} & set(X)
 
 
-def test_last_event_type_is_encoded_and_missing_stays_missing():
-    X = model_matrix(pd.concat([rows(sess_last_event_type="add_to_cart"), rows(sess_last_event_type=None)]))
-    assert X["sess_last_event_type"].iloc[0] == 2 and math.isnan(X["sess_last_event_type"].iloc[1])
+def test_last_event_type_never_reaches_the_model():
+    # Training always sees the current search as the session's last event (ColumnSelection includes the event at the
+    # label time); at serving it is the click or cart before. Same call as SERP (ml/PLAN.md, 2026-11-17).
+    a, b = model_matrix(rows(sess_last_event_type="search")), model_matrix(rows(sess_last_event_type="click"))
+    assert a.values.tolist() == b.values.tolist()
+    assert not any("event_type" in c for c in MODEL_COLUMNS)
 
 
 def test_rank_metrics_per_group_mrr_at_5_and_success_at_1():
@@ -112,7 +115,7 @@ def searches(n, seed):
 def test_ranker_learns_session_intent_and_beats_the_l1_order():
     train = searches(300, seed=0).sample(frac=1, random_state=0)  # grouping must not rely on row order
     valid, test = searches(100, seed=1), searches(200, seed=2)
-    ranker = fit_ranker(train, valid)
+    ranker = fit_ranker(train, valid, matrix=model_matrix)
     test["l1"], test["l2"] = -test["l1_rank"], score(ranker, test)
     assert rank_metrics(test, "l2")["mrr"].mean() > rank_metrics(test, "l1")["mrr"].mean() + 0.3
 
@@ -122,7 +125,7 @@ def test_saved_model_scores_raw_rows_like_training(tmp_path):
 
     from rts_ml.qac_l2_model import QacRanker
 
-    ranker = fit_ranker(searches(100, seed=0), searches(50, seed=1))
+    ranker = fit_ranker(searches(100, seed=0), searches(50, seed=1), matrix=model_matrix)
     # The endpoint strips the lookup keys before calling the model: it gets features and request fields only.
     test = searches(20, seed=2).drop(columns=["session_id", "user_id"])
     mlflow.pyfunc.save_model(tmp_path / "model", python_model=QacRanker(ranker),
@@ -143,10 +146,19 @@ def test_slice_report_compares_l1_and_l2_overall_and_per_slice():
     df = pd.DataFrame({"group_id": ["a", "a", "b", "b", "c", "c"], "label": [0, 1, 0, 1, 1, 0],
                        "l1": [2, 1, 2, 1, 2, 1], "l2": [1, 2, 1, 2, 2, 1],
                        "is_guest": [1, 1, 1, 1, 0, 0]})
-    report = {(r["slice"], r["value"], r["metric"]): r for r in slice_report(df, ["is_guest"], seed=0)}
+    rows_ = slice_report(df, ["is_guest"], per_group=rank_metrics, metrics=("mrr", "success1"), seed=0)
+    report = {(r["slice"], r["value"], r["metric"]): r for r in rows_}
     overall = report[("all", "all", "success1")]
     assert overall["n"] == 3 and overall["l1"] == 1 / 3 and overall["l2"] == 1.0
     assert math.isclose(overall["lift"], 2 / 3)
     guests, members = report[("is_guest", 1, "mrr")], report[("is_guest", 0, "mrr")]
     assert (guests["n"], guests["l1"], guests["l2"], guests["lift_lo"]) == (2, 0.5, 1.0, 0.5)
     assert (members["n"], members["lift"], members["lift_lo"], members["lift_hi"]) == (1, 0.0, 0.0, 0.0)
+
+
+def test_fit_valid_split_holds_out_the_last_days_and_drops_groups_l1_missed():
+    t = pd.Timestamp("2026-11-10")
+    df = pd.DataFrame({"group_id": ["a", "a", "b", "b", "c", "c"], "label": [1, 0, 0, 0, 0, 1],
+                       "event_time": [t, t, t, t, t + pd.Timedelta(days=5), t + pd.Timedelta(days=5)]})
+    fit, valid = fit_valid_split(df, valid_days=2)
+    assert set(fit["group_id"]) == {"a"} and set(valid["group_id"]) == {"c"}  # b has no positive: teaches nothing

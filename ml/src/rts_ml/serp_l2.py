@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from rts_ml.qac_l2 import _log_gap, _share
+from rts_ml import l2
 
 # Feature View names (`rts_shared.features`, 30-minute / 30-day / 7-day windows).
 COUNTS = ("sess_n_clicks_30m", "sess_n_carts_30m", "sess_n_searches_30m", "user_n_clicks_30d", "user_n_carts_30d",
@@ -31,15 +31,7 @@ MODEL_COLUMNS = (*COUNTS, *(f"log_{c}" for c in PRICES), "sess_std_price_30m",
 
 def add_crosses(df: pd.DataFrame) -> pd.DataFrame:
     """The candidate x session/user features; returns a copy with the cross columns added (gaps NaN if missing)."""
-    out = df.copy()
-    out["sess_cat_share"] = _share(df["sess_cat_cnt_30m"], df["sess_n_clicks_30m"], df["sess_n_carts_30m"])
-    out["user_cat_share"] = _share(df["user_cat_cnt_30d"], df["user_n_clicks_30d"], df["user_n_carts_30d"])
-    # Nulls never match: a session with no engaged event, or a product with no brand.
-    out["cat_is_last"] = (df["category"].notna() & (df["category"] == df["sess_last_category"])).astype(int)
-    out["brand_is_last"] = (df["brand"].notna() & (df["brand"] == df["sess_last_brand"])).astype(int)
-    for gap, reference in GAPS.items():
-        out[gap] = _log_gap(df["price"], df[reference])
-    return out
+    return l2.add_crosses(df, "price", GAPS)
 
 
 def model_matrix(df: pd.DataFrame) -> pd.DataFrame:
@@ -74,6 +66,27 @@ def pack_group(g: pd.DataFrame, columns: list[str], n: int) -> tuple[np.ndarray,
     x, y, mask = np.zeros((n, len(columns)), np.float32), np.zeros(n, np.float32), np.zeros(n, np.float32)
     x[:len(g)], y[:len(g)], mask[:len(g)] = g[columns].to_numpy(np.float32), g["label"].to_numpy(np.float32), 1
     return x, y, mask
+
+
+def pack_searches(df: pd.DataFrame, n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Raw candidate rows (`search_id`, `l1_rank`, `label` and the model inputs) -> (search ids [S], x [S, n, F],
+    label [S, n], mask [S, n]): the model matrix, one search per row in L1 order, sorted by search id."""
+    X = model_matrix(df).assign(search_id=df["search_id"].values, l1_rank=df["l1_rank"].values,
+                                label=df["label"].values)
+    ids, packs = zip(*((s, pack_group(g, list(MODEL_COLUMNS), n)) for s, g in X.groupby("search_id")))
+    x, y, mask = (np.stack(p) for p in zip(*packs))
+    return np.array(ids), x, y, mask
+
+
+def unpack(meta: pd.DataFrame, x: np.ndarray, y: np.ndarray, mask: np.ndarray) -> pd.DataFrame:
+    """Packed searches -> one row per real candidate: the model columns, `group_id` (the search id), `label`, `l1`
+    (minus the L1 position, so higher ranks first) and `meta`'s other columns (one row per search, as packed)."""
+    g, pos = np.nonzero(mask > 0)
+    out = pd.DataFrame(x[g, pos], columns=list(MODEL_COLUMNS))
+    out["group_id"], out["label"], out["l1"] = meta["search_id"].values[g], y[g, pos].astype(int), -(pos + 1)
+    for c in meta.columns.drop("search_id"):
+        out[c] = meta[c].values[g]
+    return out
 
 
 def ndcg_per_group(df: pd.DataFrame, score: str, group: str = "group_id", label: str = "label",

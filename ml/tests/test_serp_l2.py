@@ -8,8 +8,9 @@ import pytest
 from rts_shared.config import load_config
 from rts_shared.features import feature_keys
 from rts_shared.retrieval import SERP_L2_REQUEST_COLUMNS
-from rts_ml.qac_l2 import fit_ranker, slice_report
-from rts_ml.serp_l2 import MODEL_COLUMNS, add_crosses, model_matrix, ndcg_per_group, pack_group
+from rts_ml.l2 import fit_ranker, slice_report
+from rts_ml.serp_l2 import (MODEL_COLUMNS, add_crosses, model_matrix, ndcg_per_group, pack_group, pack_searches,
+                             unpack)
 from serp_l2_data import NO_HISTORY, rows, searches
 
 
@@ -71,6 +72,20 @@ def test_pack_group_orders_by_l1_rank_and_pads():
     assert y.tolist() == [2, 0, 1, 0, 0] and mask.tolist() == [1, 1, 1, 0, 0]
     with pytest.raises(ValueError):
         pack_group(g, ["f"], n=2)
+
+
+def test_pack_searches_then_unpack_gives_back_the_model_rows():
+    # serp_l2_training_set packs; serp_l2_dcnv2 unpacks for LightGBM and the report. Searches arrive shuffled.
+    df = searches(3, seed=0, size=4).sample(frac=1, random_state=0).rename(columns={"group_id": "search_id"})
+    df = df[(df["search_id"] != "g1") | (df["l1_rank"] != 4)]  # one search with fewer candidates
+    ids, x, y, mask = pack_searches(df, n=5)
+    assert x.shape == (3, 5, len(MODEL_COLUMNS)) and mask.sum(axis=1).tolist() == [4, 3, 4] and x[1, 3:].sum() == 0
+    meta = pd.DataFrame({"search_id": ids, "guest": ["g", "l", "l"]})
+    back = unpack(meta, x, y, mask)
+    want = model_matrix(df).assign(group_id=df["search_id"].values, l1=-df["l1_rank"].values, label=df["label"].values)
+    want = want.sort_values(["group_id", "l1"], ascending=[True, False]).reset_index(drop=True)
+    pd.testing.assert_frame_equal(back[want.columns], want, check_dtype=False)
+    assert back.groupby("group_id")["guest"].first().to_dict() == {"g0": "g", "g1": "l", "g2": "l"}
 
 
 def test_ndcg_at_10_per_group_uses_graded_gains():

@@ -4,6 +4,36 @@ Places where a small interface could hide more of the work (deepening opportunit
 tracks, plus the order to do them in. Branch `architecture`. Each track ticks off its own section here; status stays in
 [PLAN.md](PLAN.md).
 
+## Resume here (updated 2026-11-17, end of session 1)
+
+- **Where things are:** phase 1 (#1, #2) and the app track (bugs, #3, #4) are merged into `main` and pushed
+  (`6624409`). Work happens in the worktree `~/GitHub/databricks-real-time-search-arch` on branch `architecture`
+  (at `main` plus this note). One track at a time, in this worktree only.
+- **Next:** the ml track (bugs, #6, #5) is done on `architecture`, unmerged. Open: training on time-shifted history (Bugs) blocks
+  retraining on fevm until the data is rebuilt. QAC v2 is registered, not deployed (v1 serves). Then data: the
+  `clickstream_sim` bug, then #8.
+- **How we work (agreed with the user):**
+  - Present the design choices before coding, test first, one commit per item.
+  - Ask before merging into `main` or pushing. The repo is public.
+  - Report results in numbers (lines, modules, tests), not just a description.
+- **Tests:**
+  - Python, from the repo root: `uv run --no-project --with pytest --with pyyaml --with pandas --with numpy --with
+    lightgbm --with scikit-learn --with mlflow-skinny --with databricks-sdk --with fastapi --with httpx python -m
+    pytest -q` (214 pass).
+  - Torch tests: a separate process with `--with torch ... ml/tests_torch`.
+  - Frontend: `cd app/frontend && npm test` (15 pass).
+- **Live checks:** on fevm, profile `fevm-jon`, bundle target `fevm`. The `e2-demo-fe` login has expired.
+  - Copy the gitignored `shared/configs/{dev,fevm}.yml` from the main checkout before deploying.
+  - As of 2026-11-17 the app, all three endpoints and the session pipeline are **running** (the user chose to leave
+    them on). Ask before turning anything off, and say so when testing is done.
+  - App routes are checked over HTTP with `WorkspaceClient(profile=...).config.authenticate()` headers, as
+    `scripts/pre_demo_checks.py` (`_app_call`) does.
+- **Measured so far** (`32ef8db` → `6624409`, the user's load test excluded):
+  - Production code: +815 / −630 lines.
+  - `main.py`: 455 → 44 lines. `App.jsx`: 990 → 901 lines.
+  - Python tests: 169 → 204. Frontend tests: 0 → 15. Routes with a test: 0 → 13 of 16.
+  - Hardcoded feature names in the app backend: 16 → 5. Places that call an L2 endpoint directly: 4 → 2.
+
 ## Order
 
 **Phase 1: `shared/`, in the `architecture` worktree, one candidate at a time (PLAN.md rule 1).** The cross-track
@@ -29,7 +59,7 @@ Order: app, then ml, then data. Originally: one worktree per track, branched fro
 - app: bug commits (done), then #3 (done), then #4 (done; not yet deployed). Live on fevm 2026-11-17 (app bundle, `bundle run rts_app`):
   every route 200, QAC L2 36 ms, SERP L2 96 ms, Play → freshness ready in 820 ms, persona check ok for all three.
   Browser check of the UI (QAC error message) still to do.
-- ml: bug commits, then #5 and #6.
+- ml: bug commits (done), #6 (done), then #5.
 - data: bug commits, then #8.
 
 **Bugs:** each is its own commit in its track's worktree, before that track's refactor, test first (so it ships even if
@@ -116,6 +146,19 @@ with a fake `fetch`. `PAGES` is gone (pages follow the response), and stages are
   `sess_last_event_type`, and nothing asserts QAC's is safe. The torch test re-implements the packing.
 - Solution: one module per surface builds the training set; notebooks become thin callers.
 - Benefits: labels, the L1 join and packing become testable; the torch test runs production code.
+- Done (2026-11-17), unmerged. Decided: Spark builders move to modules but are checked live only (no JVM locally);
+  QAC drops `sess_last_event_type`; the live check runs the training tasks only. Modules: `rts_ml.l2` (shared
+  crosses, LambdaRank, report), `rts_ml.l2_training` (training features, evaluation slices), `qac_l2_training`,
+  `serp_l2_training` (spines and labels); `serp_l2.pack_searches` / `unpack`, `qac_l2.fit_valid_split` (tested).
+  Lines: notebooks 684 → 571 (−113), modules 212 → 371 (+159), net +46: not the cut expected; the gain is that the
+  feature list, slices, packing and splits exist once and the torch test runs production packing. Tests 211 → 213.
+  Live on fevm: QAC v2 trained: same groups (66,934 / 7,240 / 29,973), same L1 metrics and ceiling (0.819) as v1;
+  MRR lift +0.0578 (v1 +0.0584), success@1 +0.0629 (v1 +0.063). Not deployed. SERP training set ran; `serp_l2_dcnv2`
+  failed its raw-vs-packed parity check (max diff 2.35), so no new SERP version. A diagnostic showed the stored matrix
+  equals the full-spine training set bit for bit (the refactor is not the cause), but Feature Engineering returns
+  different user/item (Delta, sliding-window) features for a 5-search spine than for the full spine, and SQL counts
+  from `session_events` side with neither consistently (user clicks: small spine right; item clicks: full spine right).
+  Cause: `session_events` was time-shifted after the labels (see Bugs); the check caught it.
 
 **#6 L2 endpoint deploys**
 - Files: `ml/src/rts_ml/serving.py`, `ml/notebooks/l2_endpoint.py`, `shared/src/rts_shared/lakebase.py`,
@@ -125,6 +168,11 @@ with a fake `fetch`. `PAGES` is gone (pages follow the response), and stages are
   is written three times.
 - Solution: one module takes this run's model and the config and makes the endpoint match.
 - Benefits: `test_serving.py`'s fakes cover the whole interface.
+- Done (2026-11-17). Decided: `rts_ml.serving.deploy(w, block, model_name, version)` builds the served entity from
+  config, ensures, waits and checks the served version; both endpoint notebooks call it. A `route_optimized` mismatch
+  raises (it can't change in place; recreating means L2 downtime). The three wait loops stay separate: they poll
+  different resources and states. Lines: `serving.py` 56 → 76, `l2_endpoint.py` 82 → 66, `serp_query_embedding.py`
+  73 → 59 (net −10). Live on fevm: `--only` QAC L2 and query embedding both "unchanged".
 
 ### data
 
@@ -144,6 +192,19 @@ with a fake `fetch`. `PAGES` is gone (pages follow the response), and stages are
 - [x] app: `bench_qac_l1` defined twice (removed in the load test commit); `import itertools` twice. `main.py`.
 - [x] app: QAC doesn't check the endpoint returned one score per candidate. `service.py:38`. Fixed by #2.
 - [x] app: QAC fetch has no error path; a 500 body is stored as the result and the render throws. `App.jsx:736-741`.
-- [ ] ml: `ensure_endpoint` ignores workload size and type. `serving.py:27-30`.
-- [ ] ml: `l2_endpoint` deploys the highest registered version, not this run's. `l2_endpoint.py:62`.
+- [x] ml: `ensure_endpoint` ignores workload size and type. `serving.py:27-30`.
+- [x] ml: `l2_endpoint` deploys the highest registered version, not this run's. `l2_endpoint.py:62`.
+  Decided (2026-11-17): training tasks set task value `version` (`lgbm_version`); endpoint tasks read it from
+  `train_task` with `default=""` and serve the latest when run alone. Same fix in `serp_query_embedding`. Live on
+  fevm: `--only qac_l2_endpoint` fell back to v1, "unchanged". The task-value path itself runs on the next retrain.
+- [ ] ml/data: training ran on time-shifted history (found 2026-11-17 by `serp_l2_dcnv2`'s parity check). `time_shift`
+  moved `session_events` +120 h (UPDATEs 2026-11-16 23:37 and 2026-11-17 18:25 UTC); labels and the Kafka copy keep
+  their dates, which `time_shift.py` says means don't retrain. Training sets over the full spine compute user/item
+  features from the shifted source (5 days off their labels); small spines inside the materialized range (window ends
+  2026-10-28 onward) read the pre-shift offline tables (inferred from one user and one item: offline 3 = unshifted
+  count 3, full spine 6 = shifted count). QAC v2 (registered today, not deployed) trained on the shifted features;
+  nothing in QAC checked. Not an FE bug and not #5. Diagnostic: `real-time-search/scratch/serp_l2_parity_diag`.
+  Done 2026-11-17: QAC v2 deleted (v1 serves); `rts_ml.l2_training.require_unshifted_history` (pure part
+  `rts_shared.config.history_shift`, tested) stops both training notebooks first; live on fevm it fails with
+  "shifted 5 days". Still open (the user's call: not now): rebuild the data before the next retrain.
 - [ ] data: `clickstream_sim.py:90` redefines the required event fields instead of importing `REQUIRED_FIELDS`.
