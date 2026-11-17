@@ -36,7 +36,8 @@ from rts_shared.config import full_name, load_config
 from rts_shared.features import online_table_prefix
 from rts_shared.kafka import producer as kafka_producer
 from rts_shared.lakebase import branch, features_database
-from rts_shared.retrieval import SERP_INDEX_COLUMNS, SERP_INDEX_TEXT, qac_l2_records, serp_l2_records
+from rts_shared.retrieval import SERP_INDEX_COLUMNS, SERP_INDEX_TEXT
+from rts_shared.retrieval import qac_l2_scores as query_qac_l2, serp_l2_scores as query_serp_l2
 
 ROOT = Path(__file__).resolve().parents[3]  # app/backend/rts_app/main.py -> source root
 CFG = load_config(str(ROOT / os.environ.get("RTS_CONFIG", "shared/configs/dev.yml")))
@@ -113,8 +114,7 @@ def qac_l2_scores(rows: list[dict], session_id: str | None, user_id: str | None,
     # Runs on L2_POOL, so it finishes and logs its full time even after the request has timed out and moved on.
     t = time.perf_counter()
     try:
-        return w.serving_endpoints_data_plane.query(
-            name=QAC_L2["endpoint"], dataframe_records=qac_l2_records(rows, session_id, user_id)).predictions
+        return query_qac_l2(w, QAC_L2["endpoint"], rows, session_id, user_id)
     except Exception:
         log.exception("qac_l2 call failed")
         raise
@@ -129,16 +129,12 @@ def serp_l2_scores(hits: list[dict], session_id: str | None, user_id: str | None
     # Same lookups as QAC L2 (session and user features by key), plus item features by product_id. Runs on L2_POOL.
     t = time.perf_counter()
     try:
-        scores = w.serving_endpoints_data_plane.query(
-            name=SERP_L2_ENDPOINT, dataframe_records=serp_l2_records(hits, session_id, user_id)).predictions
+        return query_serp_l2(w, SERP_L2_ENDPOINT, hits, session_id, user_id)
     except Exception:
         log.exception("serp_l2 call failed")
         raise
     finally:
         log.info("serp_l2 call %.1f ms, %d candidates", (time.perf_counter() - t) * 1000, len(hits))
-    if len(scores) != len(hits):
-        raise ValueError(f"serp_l2 returned {len(scores)} scores for {len(hits)} hits")
-    return scores
 
 
 def query_index(**kw) -> list[dict]:

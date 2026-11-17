@@ -77,7 +77,7 @@ scripts/  pre_demo.sh (+ pre_demo_checks.py) brings everything up and checks it;
 | Feature catalog (`rts_shared.features`: every feature's definition, lookup keys and online table) | data | ml, app | `shared/tests/test_features.py` pins every name and key; ml and app tests check their literals against it |
 | Demo scenarios (`rts_shared.scenarios`) | data | app | `SCENARIO_COLUMNS` and `replay`, tested |
 | Retrieval outputs (`rts_shared.retrieval`: prefix table, index columns) | ml | app | `QAC_PREFIX_COLUMNS`, `SERP_INDEX_COLUMNS`, tested |
-| L2 endpoint inputs | ml | app | `QAC_L2_REQUEST_COLUMNS`, `qac_l2_records`, `serp_l2_records`, tested |
+| L2 calls (`rts_shared.retrieval`: request columns and the call itself) | ml | app, ml benchmarks | `qac_l2_scores` / `serp_l2_scores` check one score per candidate; tested against a fake endpoint |
 
 Bundles refer to each other's objects by name through the shared config, never through `${resources...}`, so each
 can deploy on its own (and later under its own service principal).

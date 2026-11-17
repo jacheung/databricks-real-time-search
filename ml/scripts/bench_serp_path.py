@@ -21,7 +21,7 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "shared", "src"))
 from rts_shared.config import full_name, load_config  # noqa: E402
-from rts_shared.retrieval import SERP_INDEX_COLUMNS, SERP_INDEX_TEXT, serp_l2_records  # noqa: E402
+from rts_shared.retrieval import SERP_INDEX_COLUMNS, SERP_INDEX_TEXT, serp_l2_scores  # noqa: E402
 
 from databricks.sdk import WorkspaceClient  # noqa: E402
 
@@ -57,10 +57,8 @@ def main(config_path):
                                                 num_results=ai["serp_l1_k"])
         hits = [dict(zip([c.name for c in r.manifest.columns], row)) for row in r.result.data_array or []]
         t2 = time.perf_counter()
-        scores = w.serving_endpoints_data_plane.query(
-            name=l2["endpoint"], dataframe_records=serp_l2_records(hits, session_id, user_id)).predictions
+        serp_l2_scores(w, l2["endpoint"], hits, session_id, user_id)  # raises unless every hit gets a score
         t3 = time.perf_counter()
-        assert len(scores) == len(hits), f"{len(scores)} scores for {len(hits)} hits ({query!r})"
         return len(hits), {"embed": t1 - t0, "l1_search": t2 - t1, "l2": t3 - t2, "total": t3 - t0}
 
     for s in searches[:WARMUP]:

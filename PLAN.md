@@ -120,7 +120,7 @@ Checked by tests, not by sessions agreeing. Change one only under rule 1.
 | Feature catalog: `feature_specs`, `feature_keys`, `online_table_prefix` (`rts_shared.features`) | data | ml, app |
 | `SCENARIO_COLUMNS`, `replay` (`rts_shared.scenarios`) | data | app |
 | `QAC_PREFIX_COLUMNS`, `lookup_prefix`, `filter_completions` (`rts_shared.retrieval`) | ml | app |
-| `QAC_L2_CANDIDATE_COLUMNS`, `QAC_L2_REQUEST_COLUMNS`, `qac_l2_records` | ml | app |
+| L2 calls: `*_L2_REQUEST_COLUMNS`, `qac_l2_scores`, `serp_l2_scores` (one score per candidate, or `ValueError`) | ml | app, ml benchmarks |
 | `SERP_INDEX_COLUMNS`, `SERP_INDEX_TEXT` | ml | app |
 | Kafka client and Lakebase helpers (`rts_shared.kafka`, `rts_shared.lakebase`) | data | app, ml |
 

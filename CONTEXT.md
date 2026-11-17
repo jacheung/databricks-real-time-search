@@ -3,6 +3,19 @@
 Query autocomplete (QAC) and search results (SERP) for a retail catalog, each retrieved by L1 and reranked by a
 session-aware L2 model, served from features that stay fresh to the second.
 
+## Search
+
+**L1**:
+Retrieval: QAC's prefix lookup in Lakebase, or SERP's hybrid query on the product index. Its order is the fallback.
+_Avoid_: candidate generation, recall stage
+
+**L2**:
+The session-aware reranker over L1's top candidates, served on its own endpoint per surface (QAC, SERP).
+_Avoid_: ranker, model (alone)
+
+**L2 call**:
+One request to an L2 endpoint: L1's candidates plus lookup keys in, one score per candidate out.
+
 ## Features
 
 **Feature catalog**:
