@@ -39,8 +39,8 @@ home page is now a decorative banner (`brand/hero_banner.py` → `public/hero.sv
 - Cross-track asks (ml/data):
   - `sess_last_event_type` skew: online it is always the last click or cart, though the spec defines it over all
     events, so training may have seen `search` values serving never does.
-  - `ensure_endpoint` applies config only on a new model version, so size or scale-to-zero changes reach an existing
-    endpoint only by recreation or a manual `update-config` (`rts-qac-l2` was found with scale-to-zero on, 2026-11-04).
+  - ~~`ensure_endpoint` applies config only on a new model version~~: fixed 2026-11-17, it now compares workload type,
+    size and scale-to-zero too (`rts-qac-l2` was found with scale-to-zero on, 2026-11-04).
 - Check the app's Lakebase SELECT survives a snapshot re-sync (synced tables may be recreated; default privileges are set).
 - Pay-per-token fallback in `/api/search` (when `rts-query-embedding` fails): kept for now, visible as
   `embedding: fallback_managed`. The user's call whether to fail instead.

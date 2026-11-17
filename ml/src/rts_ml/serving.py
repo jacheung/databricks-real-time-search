@@ -26,7 +26,8 @@ def ensure_endpoint(w, name: str, entity, route_optimized: bool) -> str:
         return create()
     served = endpoint.config.served_entities or []
     # scale_to_zero too: e2-demo-fe's cleanup bot turns it on overnight, and cold starts time L2 out.
-    key = lambda s: (s.entity_name, s.entity_version, bool(s.scale_to_zero_enabled))  # noqa: E731
+    key = lambda s: (s.entity_name, s.entity_version, s.workload_type, s.workload_size,  # noqa: E731
+                     bool(s.scale_to_zero_enabled))
     if [key(s) for s in served] == [key(entity)]:
         return "unchanged"
     w.serving_endpoints.update_config(name=name, served_entities=[entity])

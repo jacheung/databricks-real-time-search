@@ -180,6 +180,6 @@ with a fake `fetch`. `PAGES` is gone (pages follow the response), and stages are
 - [x] app: `bench_qac_l1` defined twice (removed in the load test commit); `import itertools` twice. `main.py`.
 - [x] app: QAC doesn't check the endpoint returned one score per candidate. `service.py:38`. Fixed by #2.
 - [x] app: QAC fetch has no error path; a 500 body is stored as the result and the render throws. `App.jsx:736-741`.
-- [ ] ml: `ensure_endpoint` ignores workload size and type. `serving.py:27-30`.
+- [x] ml: `ensure_endpoint` ignores workload size and type. `serving.py:27-30`.
 - [ ] ml: `l2_endpoint` deploys the highest registered version, not this run's. `l2_endpoint.py:62`.
 - [ ] data: `clickstream_sim.py:90` redefines the required event fields instead of importing `REQUIRED_FIELDS`.
