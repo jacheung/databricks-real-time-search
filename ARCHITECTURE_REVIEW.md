@@ -9,15 +9,10 @@ tracks, plus the order to do them in. Branch `architecture`. Each track ticks of
 - **Where things are:** phase 1 (#1, #2) and the app track (bugs, #3, #4) are merged into `main` and pushed
   (`6624409`). Work happens in the worktree `~/GitHub/databricks-real-time-search-arch` on branch `architecture`
   (at `main` plus this note). One track at a time, in this worktree only.
-- **Next, the ml track, in this order:**
-  1. The two ml bugs below (`ensure_endpoint` ignores workload size and type; `l2_endpoint` deploys the highest model
-     version, not this run's). Test first, one commit each.
-  2. #6 L2 endpoint deploys. Open questions for the user: which served-entity fields count as a difference
-     (`route_optimized` can't change in place, so it would mean recreating the endpoint), and how `l2_endpoint` learns
-     this run's version (a task value from the training task, or a job parameter).
-  3. #5 L2 training sets. The user expects this one to cut lines: it removes the copied feature lists, labels and
-     slices across three notebooks. Report lines before and after.
-  4. Then data: the `clickstream_sim` bug, then #8.
+- **Next, the ml track:** the two ml bugs and #6 are done on `architecture` (`3f15e59`, `8331657`, `83bb880`; not
+  merged). Next is #5 L2 training sets. The user expects it to cut lines: it removes the copied feature lists, labels
+  and slices across three notebooks. Report lines before and after. Then data: the `clickstream_sim` bug, then #8.
+  Not yet run live: the task-value path (training sets `version`, endpoint reads it). It runs on the next retrain.
 - **How we work (agreed with the user):**
   - Present the design choices before coding, test first, one commit per item.
   - Ask before merging into `main` or pushing. The repo is public.
@@ -25,7 +20,7 @@ tracks, plus the order to do them in. Branch `architecture`. Each track ticks of
 - **Tests:**
   - Python, from the repo root: `uv run --no-project --with pytest --with pyyaml --with pandas --with numpy --with
     lightgbm --with scikit-learn --with mlflow-skinny --with databricks-sdk --with fastapi --with httpx python -m
-    pytest -q` (204 pass).
+    pytest -q` (211 pass).
   - Torch tests: a separate process with `--with torch ... ml/tests_torch`.
   - Frontend: `cd app/frontend && npm test` (15 pass).
 - **Live checks:** on fevm, profile `fevm-jon`, bundle target `fevm`. The `e2-demo-fe` login has expired.
