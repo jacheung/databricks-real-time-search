@@ -68,6 +68,27 @@ def pack_group(g: pd.DataFrame, columns: list[str], n: int) -> tuple[np.ndarray,
     return x, y, mask
 
 
+def pack_searches(df: pd.DataFrame, n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Raw candidate rows (`search_id`, `l1_rank`, `label` and the model inputs) -> (search ids [S], x [S, n, F],
+    label [S, n], mask [S, n]): the model matrix, one search per row in L1 order, sorted by search id."""
+    X = model_matrix(df).assign(search_id=df["search_id"].values, l1_rank=df["l1_rank"].values,
+                                label=df["label"].values)
+    ids, packs = zip(*((s, pack_group(g, list(MODEL_COLUMNS), n)) for s, g in X.groupby("search_id")))
+    x, y, mask = (np.stack(p) for p in zip(*packs))
+    return np.array(ids), x, y, mask
+
+
+def unpack(meta: pd.DataFrame, x: np.ndarray, y: np.ndarray, mask: np.ndarray) -> pd.DataFrame:
+    """Packed searches -> one row per real candidate: the model columns, `group_id` (the search id), `label`, `l1`
+    (minus the L1 position, so higher ranks first) and `meta`'s other columns (one row per search, as packed)."""
+    g, pos = np.nonzero(mask > 0)
+    out = pd.DataFrame(x[g, pos], columns=list(MODEL_COLUMNS))
+    out["group_id"], out["label"], out["l1"] = meta["search_id"].values[g], y[g, pos].astype(int), -(pos + 1)
+    for c in meta.columns.drop("search_id"):
+        out[c] = meta[c].values[g]
+    return out
+
+
 def ndcg_per_group(df: pd.DataFrame, score: str, group: str = "group_id", label: str = "label",
                    k: int = 10) -> pd.DataFrame:
     """NDCG@k per group, gain 2^label - 1 (cart 2 > click 1). Groups with no engaged candidate have no ideal order

@@ -45,7 +45,7 @@ from pyspark.sql.window import Window
 _nb_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
 ROOT = "/Workspace" + "/".join(_nb_path.split("/")[:-3])  # this notebook is <ROOT>/ml/notebooks/<name>
 sys.path[:0] = [f"{ROOT}/shared/src", f"{ROOT}/ml/src"]
-from rts_ml.serp_l2 import COUNTS, MODEL_COLUMNS, PRICES, model_matrix, pack_group
+from rts_ml.serp_l2 import COUNTS, MODEL_COLUMNS, PRICES, pack_searches
 from rts_shared.config import full_name, load_config, table
 from rts_shared.features import feature_keys
 from rts_shared.retrieval import SERP_INDEX_PK, SERP_L2_REQUEST_COLUMNS
@@ -151,8 +151,6 @@ spark.sql(f"DROP TABLE IF EXISTS {MATRIX}")
 coverage, finite = [], True
 for b in range(BUCKETS):
     pdf = joined.where(F.col("bucket") == b).toPandas()
-    X = model_matrix(pdf)
-    finite &= bool(np.isfinite(X.to_numpy()).all())
     # Real history, not just non-null: counts are 0 (not null) without history.
     guest = pdf["is_guest"] == 1
     coverage.append({"rows": len(pdf), "earlier_search": int((pdf["sess_n_searches_30m"].fillna(0) > 0).sum()),
@@ -161,16 +159,14 @@ for b in range(BUCKETS):
                      "guest_user_history": int((guest & (pdf["user_n_clicks_30d"].fillna(0) > 0)).sum()),
                      "item_history": int((pdf["item_clicks_7d"].fillna(0) > 0).sum()),
                      "brand": int(pdf["brand"].notna().sum())})
-    X = X.assign(search_id=pdf["search_id"].values, l1_rank=pdf["l1_rank"].values, label=pdf["label"].values)
-    out = []
-    for search_id, g in X.groupby("search_id"):
-        x, y, mask = pack_group(g, COLUMNS, n=N)
-        s = slices.loc[search_id]
-        out.append((search_id, s["split"], s["search"], s["guest"], s["intent"], x.ravel().tolist(), y.tolist(),
-                    mask.tolist()))
+    ids, x, y, mask = pack_searches(pdf, n=N)
+    finite &= bool(np.isfinite(x).all())
+    s = slices.loc[ids]
+    out = [(i, *meta, xi.ravel().tolist(), yi.tolist(), mi.tolist())
+           for i, *meta, xi, yi, mi in zip(ids, s["split"], s["search"], s["guest"], s["intent"], x, y, mask)]
     spark.createDataFrame(out, SCHEMA).write.mode("append").saveAsTable(MATRIX)
     print(f"bucket {b}: {len(pdf):,} rows, {len(out):,} searches")
-    del pdf, X, out
+    del pdf, x, out
 
 # COMMAND ----------
 

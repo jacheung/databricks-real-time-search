@@ -4,15 +4,14 @@ runtimes and segfault (OMP_NUM_THREADS=1 doesn't help), so `testpaths` leaves th
 import numpy as np
 import torch
 
-from rts_ml.serp_l2 import MODEL_COLUMNS, model_matrix, ndcg_per_group, pack_group
+from rts_ml.serp_l2 import ndcg_per_group, pack_searches
 from rts_ml.serp_l2_dcn import DCNv2, fit_dcn, listwise_loss, score
 from serp_l2_data import searches
 
 
 def packed(df, size=12):
-    X = model_matrix(df).assign(l1_rank=df["l1_rank"].values, label=df["label"].values, group_id=df["group_id"].values)
-    xs, ys, ms = zip(*(pack_group(g, list(MODEL_COLUMNS), n=size) for _, g in X.groupby("group_id")))
-    return torch.tensor(np.stack(xs)), torch.tensor(np.stack(ys)), torch.tensor(np.stack(ms))
+    _, x, y, mask = pack_searches(df.rename(columns={"group_id": "search_id"}), n=size)
+    return torch.from_numpy(x), torch.from_numpy(y), torch.from_numpy(mask)
 
 
 def batches(x, y, mask, size=64):
