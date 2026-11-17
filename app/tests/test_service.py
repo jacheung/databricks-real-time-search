@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from rts_app.service import (index_query, latency_stats, play_scenario, qac, rows_to_dicts, scenario_timeline, search,
-                             expected_session_features, freshness_breakdown, l2_inputs, landed, session_features,
-                             time_calls, user_feature_values, with_timeout, RecentValues)
+                             expected_session_features, freshness_breakdown, l2_inputs, landed, online_tables,
+                             session_features, time_calls, user_feature_values, with_timeout, RecentValues)
 from rts_app.service import persona_lift, ranked_top, trending
 from rts_shared.events import EVENT_FIELDS
 from rts_shared.features import feature_keys
@@ -459,3 +459,21 @@ def test_trending_dedupes_completions_across_prefixes_keeps_short_ones_and_ranks
                    {"query": "batteries", "category": "Electronics"},
                    {"query": "camera bag", "category": "Camera & Photo"}]
     assert trending([], n=3) == []
+
+
+def test_online_tables_name_each_kind_by_the_one_table_holding_its_column():
+    found = [{"nspname": "s", "relname": "rts_session_online_a1", "attname": "sess_n_clicks_30m"},
+             {"nspname": "s", "relname": "rts_session_online_b2", "attname": "sess_cat_cnt_30m"}]
+    assert online_tables({"window": "sess_n_clicks_30m", "category": "sess_cat_cnt_30m"}, found) == {
+        "window": '"s"."rts_session_online_a1"', "category": '"s"."rts_session_online_b2"'}
+
+
+@pytest.mark.parametrize("found", [
+    [{"nspname": "s", "relname": "rts_session_online_a1", "attname": "sess_n_clicks_30m"}],  # one kind missing
+    [{"nspname": "s", "relname": t, "attname": c} for t in ("rts_session_online_a1", "rts_session_online_c3")
+     for c in ("sess_n_clicks_30m", "sess_cat_cnt_30m")],  # an orphaned copy after re-materializing
+])
+def test_online_tables_raise_rather_than_return_part_of_the_mapping(found):
+    # A partial mapping would be cached and served, and freshness would fail later on the missing kind.
+    with pytest.raises(LookupError, match="expected one table with"):
+        online_tables({"window": "sess_n_clicks_30m", "category": "sess_cat_cnt_30m"}, found)

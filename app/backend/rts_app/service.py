@@ -194,6 +194,19 @@ def session_features(cfg: dict) -> dict[str, list[str]]:
     return out
 
 
+def online_tables(columns: dict[str, str], found: list[dict]) -> dict[str, str]:
+    """{kind: quoted table name} for `columns` ({kind: a column only that kind's table holds}), from `found`
+    pg_catalog rows (nspname, relname, attname). Raises LookupError unless every kind is in exactly one table, so a
+    caller never caches part of the mapping."""
+    out = {}
+    for kind, column in columns.items():
+        names = [f'"{r["nspname"]}"."{r["relname"]}"' for r in found if r["attname"] == column]
+        if len(names) != 1:
+            raise LookupError(f"expected one table with {column}, found {names}")
+        out[kind] = names[0]
+    return out
+
+
 def expected_session_features(events: list[dict]) -> dict:
     """What each session table holds once every replayed event has landed, as the online tables show it."""
     engaged = [e for e in events if e["event_type"] in ENGAGED_EVENTS]

@@ -33,7 +33,7 @@ from psycopg_pool import ConnectionPool
 from rts_app.service import (latency_stats, play_scenario, qac, rows_to_dicts, scenario_timeline, search,
                              expected_session_features, freshness_breakdown, l2_inputs, landed, time_calls,
                              user_feature_values, with_timeout, RecentValues, session_features, persona_lift,
-                             ranked_top, trending, index_query)
+                             ranked_top, trending, index_query, online_tables)
 from rts_app.load import LoadRun, summarize
 from rts_shared.config import full_name, load_config
 from rts_shared.features import online_table_prefix
@@ -160,11 +160,10 @@ def _online_tables(prefix: str, columns: dict[str, str], cache: dict) -> dict[st
                 "JOIN pg_attribute a ON a.attrelid = c.oid "
                 "WHERE n.nspname = %s AND c.relkind IN ('r', 'p') AND c.relname LIKE %s "
                 "AND a.attname = ANY(%s)", (SCHEMA, f"{prefix}%", list(columns.values()))).fetchall()
-        for kind, column in columns.items():
-            names = [f'"{r["nspname"]}"."{r["relname"]}"' for r in found if r["attname"] == column]
-            if len(names) != 1:
-                raise HTTPException(503, f"expected one {prefix} table with {column} in {FEATURES_DB}, found {names}")
-            cache[kind] = names[0]
+        try:
+            cache.update(online_tables(columns, found))  # all kinds or none: a partial cache would stick
+        except LookupError as error:
+            raise HTTPException(503, f"{prefix} in {FEATURES_DB}: {error}") from error
     return cache
 
 
