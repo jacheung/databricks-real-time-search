@@ -9,10 +9,9 @@ tracks, plus the order to do them in. Branch `architecture`. Each track ticks of
 - **Where things are:** phase 1 (#1, #2) and the app track (bugs, #3, #4) are merged into `main` and pushed
   (`6624409`). Work happens in the worktree `~/GitHub/databricks-real-time-search-arch` on branch `architecture`
   (at `main` plus this note). One track at a time, in this worktree only.
-- **Next, the ml track:** the two ml bugs and #6 are done on `architecture` (`3f15e59`, `8331657`, `83bb880`; not
-  merged). Next is #5 L2 training sets. The user expects it to cut lines: it removes the copied feature lists, labels
-  and slices across three notebooks. Report lines before and after. Then data: the `clickstream_sim` bug, then #8.
-  Not yet run live: the task-value path (training sets `version`, endpoint reads it). It runs on the next retrain.
+- **Next:** the ml track (bugs, #6, #5) is done on `architecture`, unmerged. Open before a SERP retrain: the Feature
+  Engineering user/item lookup bug (Bugs). QAC v2 is registered, not deployed (v1 serves). Then data: the
+  `clickstream_sim` bug, then #8.
 - **How we work (agreed with the user):**
   - Present the design choices before coding, test first, one commit per item.
   - Ask before merging into `main` or pushing. The repo is public.
@@ -20,7 +19,7 @@ tracks, plus the order to do them in. Branch `architecture`. Each track ticks of
 - **Tests:**
   - Python, from the repo root: `uv run --no-project --with pytest --with pyyaml --with pandas --with numpy --with
     lightgbm --with scikit-learn --with mlflow-skinny --with databricks-sdk --with fastapi --with httpx python -m
-    pytest -q` (211 pass).
+    pytest -q` (213 pass).
   - Torch tests: a separate process with `--with torch ... ml/tests_torch`.
   - Frontend: `cd app/frontend && npm test` (15 pass).
 - **Live checks:** on fevm, profile `fevm-jon`, bundle target `fevm`. The `e2-demo-fe` login has expired.
@@ -147,6 +146,19 @@ with a fake `fetch`. `PAGES` is gone (pages follow the response), and stages are
   `sess_last_event_type`, and nothing asserts QAC's is safe. The torch test re-implements the packing.
 - Solution: one module per surface builds the training set; notebooks become thin callers.
 - Benefits: labels, the L1 join and packing become testable; the torch test runs production code.
+- Done (2026-11-17), unmerged. Decided: Spark builders move to modules but are checked live only (no JVM locally);
+  QAC drops `sess_last_event_type`; the live check runs the training tasks only. Modules: `rts_ml.l2` (shared
+  crosses, LambdaRank, report), `rts_ml.l2_training` (training features, evaluation slices), `qac_l2_training`,
+  `serp_l2_training` (spines and labels); `serp_l2.pack_searches` / `unpack`, `qac_l2.fit_valid_split` (tested).
+  Lines: notebooks 684 → 571 (−113), modules 212 → 371 (+159), net +46: not the cut expected; the gain is that the
+  feature list, slices, packing and splits exist once and the torch test runs production packing. Tests 211 → 213.
+  Live on fevm: QAC v2 trained: same groups (66,934 / 7,240 / 29,973), same L1 metrics and ceiling (0.819) as v1;
+  MRR lift +0.0578 (v1 +0.0584), success@1 +0.0629 (v1 +0.063). Not deployed. SERP training set ran; `serp_l2_dcnv2`
+  failed its raw-vs-packed parity check (max diff 2.35), so no new SERP version. A diagnostic showed the stored matrix
+  equals the full-spine training set bit for bit (the refactor is not the cause), but Feature Engineering returns
+  different user/item (Delta, sliding-window) features for a 5-search spine than for the full spine, and SQL counts
+  from `session_events` side with neither consistently (user clicks: small spine right; item clicks: full spine right).
+  It passed on 2026-11-12, so something on fevm changed since. Open; see the bug below.
 
 **#6 L2 endpoint deploys**
 - Files: `ml/src/rts_ml/serving.py`, `ml/notebooks/l2_endpoint.py`, `shared/src/rts_shared/lakebase.py`,
@@ -185,4 +197,7 @@ with a fake `fetch`. `PAGES` is gone (pages follow the response), and stages are
   Decided (2026-11-17): training tasks set task value `version` (`lgbm_version`); endpoint tasks read it from
   `train_task` with `default=""` and serve the latest when run alone. Same fix in `serp_query_embedding`. Live on
   fevm: `--only qac_l2_endpoint` fell back to v1, "unchanged". The task-value path itself runs on the next retrain.
+- [ ] ml/data: Feature Engineering's point-in-time user/item (Delta) features differ by spine size, and each path
+  disagrees with SQL on one feature (2026-11-17, `serp_l2_dcnv2` parity check; diagnostic notebook
+  `real-time-search/scratch/serp_l2_parity_diag` on fevm). Blocks the next SERP retrain. Not caused by #5.
 - [ ] data: `clickstream_sim.py:90` redefines the required event fields instead of importing `REQUIRED_FIELDS`.

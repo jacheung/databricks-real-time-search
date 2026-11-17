@@ -8,7 +8,7 @@ from rts_shared.config import load_config
 from rts_shared.features import feature_keys
 from rts_shared.retrieval import QAC_L2_REQUEST_COLUMNS
 from rts_ml.l2 import bootstrap_ci, fit_ranker, slice_report
-from rts_ml.qac_l2 import MODEL_COLUMNS, add_crosses, model_matrix, rank_metrics, score
+from rts_ml.qac_l2 import MODEL_COLUMNS, add_crosses, fit_valid_split, model_matrix, rank_metrics, score
 
 
 def rows(**overrides):
@@ -154,3 +154,11 @@ def test_slice_report_compares_l1_and_l2_overall_and_per_slice():
     guests, members = report[("is_guest", 1, "mrr")], report[("is_guest", 0, "mrr")]
     assert (guests["n"], guests["l1"], guests["l2"], guests["lift_lo"]) == (2, 0.5, 1.0, 0.5)
     assert (members["n"], members["lift"], members["lift_lo"], members["lift_hi"]) == (1, 0.0, 0.0, 0.0)
+
+
+def test_fit_valid_split_holds_out_the_last_days_and_drops_groups_l1_missed():
+    t = pd.Timestamp("2026-11-10")
+    df = pd.DataFrame({"group_id": ["a", "a", "b", "b", "c", "c"], "label": [1, 0, 0, 0, 0, 1],
+                       "event_time": [t, t, t, t, t + pd.Timedelta(days=5), t + pd.Timedelta(days=5)]})
+    fit, valid = fit_valid_split(df, valid_days=2)
+    assert set(fit["group_id"]) == {"a"} and set(valid["group_id"]) == {"c"}  # b has no positive: teaches nothing

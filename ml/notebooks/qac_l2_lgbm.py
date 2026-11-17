@@ -47,26 +47,26 @@ import mlflow
 import pandas as pd
 import sklearn
 from pyspark.sql import functions as F
-from pyspark.sql.window import Window
 
 _nb_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
 ROOT = "/Workspace" + "/".join(_nb_path.split("/")[:-3])  # this notebook is <ROOT>/ml/notebooks/<name>
 sys.path[:0] = [f"{ROOT}/shared/src", f"{ROOT}/ml/src"]
 from rts_ml.l2 import fit_ranker, slice_report
-from rts_ml.qac_l2 import CROSSES, MODEL_COLUMNS, model_matrix, rank_metrics, score
+from rts_ml import qac_l2_training as qac_training
+from rts_ml.l2_training import search_slices, training_features
+from rts_ml.qac_l2 import CROSSES, MODEL_COLUMNS, fit_valid_split, model_matrix, rank_metrics, score
 from rts_ml.qac_l2_model import QacRanker
-from rts_shared.config import full_name, load_config, model_name, resolve_auto, table
+from rts_shared.config import load_config, model_name, resolve_auto
 from rts_shared.features import feature_keys
-from rts_shared.retrieval import QAC_L2_CANDIDATE_COLUMNS, QAC_L2_REQUEST_COLUMNS, normalize
+from rts_shared.retrieval import QAC_L2_REQUEST_COLUMNS
 
 from databricks.feature_engineering import FeatureEngineeringClient
-from databricks.feature_engineering.entities import ColumnSelection, RequestSource
 from databricks.sdk import WorkspaceClient
 
 dbutils.widgets.text("config_path", f"{ROOT}/shared/configs/dev.yml")  # jobs pass configs/<bundle target>.yml
 w = WorkspaceClient()
 CFG = resolve_auto(load_config(dbutils.widgets.get("config_path")), w.current_user.me().user_name)
-UC, L2 = CFG["unity_catalog"], CFG["models"]["qac_l2"]
+L2 = CFG["models"]["qac_l2"]
 MODEL_NAME = model_name(CFG, "qac_l2")
 fe = FeatureEngineeringClient()
 
@@ -77,39 +77,12 @@ assert not missing, f"model columns not provided by any feature (window suffixes
 
 # COMMAND ----------
 
-# DBTITLE 1,Spine: searches x typed prefixes x L1 candidates
-impressions = spark.table(table(CFG, "qac_impressions"))
-# Normalize on the driver with the same function as the L1 table, so prefixes match its keys.
-queries = [r["query"] for r in impressions.select("query").distinct().collect()]
-completion_of = spark.createDataFrame([(q, normalize(q)) for q in queries], "query string, submitted string")
-nth_search = F.row_number().over(Window.partitionBy("session_id").orderBy("event_time"))
-searches = (impressions.withColumn("search_index", nth_search).join(completion_of, "query")
-            .where("submitted != ''")
-            .select("search_id", "session_id", "user_id", "event_time", "split", "search_index", "submitted"))
-
-
-def sample(split, n):
-    return searches.where(F.col("split") == split).orderBy(F.sha2(F.col("search_id"), 256)).limit(n)
-
-
-l1 = (spark.table(table(CFG, "qac_prefix_completions")).where(F.col("rank") <= L2["candidates"])
-      .select("prefix", F.col("rank").alias("l1_rank"), "completion",
-              *[c for c in QAC_L2_CANDIDATE_COLUMNS if c != "l1_rank"]))
-
-
-def spine(df):
-    typed = (df.withColumn("n", F.explode(F.array(*[F.lit(n) for n in L2["prefix_lens"]])))
-             .where(F.length("submitted") >= F.col("n"))
-             .withColumn("prefix", F.expr("substring(submitted, 1, n)")))
-    return (typed.join(l1, "prefix")
-            .select(F.concat_ws(":", "search_id", F.col("n").cast("string")).alias("group_id"), "search_id",
-                    "session_id", "user_id", "event_time", *QAC_L2_CANDIDATE_COLUMNS,
-                    F.col("user_id").isNull().cast("int").alias("is_guest"),
-                    (F.col("completion") == F.col("submitted")).cast("int").alias("label")))
-
-
-train_searches, test_searches = sample("train", L2["train_searches"]), sample("test", L2["eval_searches"])
-train_spine, test_spine = spine(train_searches), spine(test_searches)
+# DBTITLE 1,Spine: searches x typed prefixes x L1 candidates (rts_ml.qac_l2_training)
+searches = qac_training.searches(spark, CFG)
+train_searches = qac_training.sample(searches, "train", L2["train_searches"])
+test_searches = qac_training.sample(searches, "test", L2["eval_searches"])
+train_spine, test_spine = (qac_training.spine(spark, CFG, s, L2["prefix_lens"], L2["candidates"])
+                           for s in (train_searches, test_searches))
 max_positives = train_spine.unionByName(test_spine).groupBy("group_id").agg(F.sum("label").alias("p")) \
     .agg(F.max("p")).first()[0]
 assert max_positives == 1, f"a ranking group has {max_positives} positives; completions should be unique per prefix"
@@ -117,22 +90,7 @@ assert max_positives == 1, f"a ranking group has {max_positives} positives; comp
 # COMMAND ----------
 
 # DBTITLE 1,Features: lookups + candidate RequestSource features
-request_source = RequestSource.from_dataframe(dataframe=train_spine.select(*QAC_L2_REQUEST_COLUMNS))
-
-
-def candidate_feature(column):
-    # Named after its request column: a RequestSource feature's value is that column of the request.
-    try:
-        return fe.create_feature(source=request_source, function=ColumnSelection(column),
-                                 catalog_name=UC["catalog"], schema_name=UC["schema"], name=column)
-    except Exception as error:  # definitions persist in UC across runs
-        if "already exists" not in str(error).lower():
-            raise
-        return fe.get_feature(full_name=full_name(CFG, column))
-
-
-FEATURES = ([fe.get_feature(full_name=full_name(CFG, n)) for n in LOOKUP_FEATURES]
-            + [candidate_feature(c) for c in QAC_L2_REQUEST_COLUMNS])
+FEATURES = training_features(fe, CFG, LOOKUP_FEATURES, train_spine, QAC_L2_REQUEST_COLUMNS)
 
 
 def training_set(df):
@@ -152,10 +110,7 @@ assert coverage["sess_last_category"] > 0 and coverage["user_n_clicks_30d"] > 0,
 # COMMAND ----------
 
 # DBTITLE 1,Train: LambdaRank, early-stopped on the last train days
-cutoff = train_pdf["event_time"].max() - pd.Timedelta(days=L2["valid_days"])
-with_positive = train_pdf.groupby("group_id")["label"].transform("max") == 1  # groups L1 missed teach nothing
-fit_rows, valid_rows = train_pdf[with_positive & (train_pdf["event_time"] < cutoff)], \
-    train_pdf[with_positive & (train_pdf["event_time"] >= cutoff)]
+fit_rows, valid_rows = fit_valid_split(train_pdf, L2["valid_days"])
 ranker = fit_ranker(fit_rows, valid_rows, matrix=model_matrix)
 print(f"{fit_rows['group_id'].nunique()} train / {valid_rows['group_id'].nunique()} valid groups; "
       f"best iteration {ranker.best_iteration_}")
@@ -163,14 +118,8 @@ print(f"{fit_rows['group_id'].nunique()} train / {valid_rows['group_id'].nunique
 # COMMAND ----------
 
 # DBTITLE 1,Evaluate: L1 vs L2 on the test split, overall and per slice
-intent = spark.table(table(CFG, "sim_sessions")).select(
-    "session_id", F.when(F.col("intent_category").isNull(), "none")
-    .when(F.col("intent_brand").isNull(), "category").otherwise("category+brand").alias("intent"))
-slices = (test_searches.join(intent, "session_id", "left")
-          .select("search_id", F.when(F.col("search_index") == 1, "first").otherwise("2nd+").alias("search"),
-                  "intent").toPandas())
-test_pdf = test_pdf.merge(slices, on="search_id")
-test_pdf["guest"] = test_pdf["user_id"].isna().map({True: "guest", False: "logged-in"})
+test_pdf = test_pdf.merge(search_slices(spark, CFG).join(test_searches.select("search_id"), "search_id").toPandas(),
+                          on="search_id")
 test_pdf["l1"], test_pdf["l2"] = -test_pdf["l1_rank"], score(ranker, test_pdf)
 
 # JSON round trip: slice values come back as numpy scalars, which MLflow and the exit payload can't serialize.
@@ -181,8 +130,7 @@ report_df = pd.DataFrame(report).astype({"value": str})  # slice values mix stri
 display(report_df)
 
 n_groups = test_spine.select("group_id").distinct().count()
-typed_groups = test_searches.select(F.explode(F.array(*[F.lit(n) for n in L2["prefix_lens"]])).alias("n"),
-                                    "submitted").where(F.length("submitted") >= F.col("n")).count()
+typed_groups = qac_training.typed(test_searches, L2["prefix_lens"]).count()
 ceiling = {"groups": typed_groups, "with_candidates": n_groups,
            "submitted_in_l1_top_k": int(test_pdf.groupby("group_id")["label"].max().sum())}
 ceiling["share"] = ceiling["submitted_in_l1_top_k"] / ceiling["groups"]

@@ -50,3 +50,11 @@ def rank_metrics(df: pd.DataFrame, score: str, group: str = "group_id", label: s
 def score(ranker, df: pd.DataFrame) -> np.ndarray:
     """L2 scores for raw candidate rows, in row order; higher ranks first."""
     return ranker.predict(model_matrix(df))
+
+
+def fit_valid_split(train: pd.DataFrame, valid_days: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The train split's candidate rows -> (fit, valid): the last `valid_days` early-stop the ranker. Groups whose
+    candidates hold no positive (L1 missed the submitted query) are left out: they teach nothing."""
+    cutoff = train["event_time"].max() - pd.Timedelta(days=valid_days)
+    train = train[train.groupby("group_id")["label"].transform("max") == 1]
+    return train[train["event_time"] < cutoff], train[train["event_time"] >= cutoff]

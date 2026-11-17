@@ -51,6 +51,7 @@ _nb_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().not
 ROOT = "/Workspace" + "/".join(_nb_path.split("/")[:-3])  # this notebook is <ROOT>/ml/notebooks/<name>
 sys.path[:0] = [f"{ROOT}/shared/src", f"{ROOT}/ml/src"]
 from rts_ml.l2 import fit_ranker, slice_report
+from rts_ml.l2_training import training_features
 from rts_ml.serp_l2 import MODEL_COLUMNS, model_matrix, ndcg_per_group, unpack
 from rts_ml.serp_l2_dcn import fit_dcn, packed_ndcg, score
 from rts_ml.serp_l2_model import SerpLgbmRanker, SerpRanker
@@ -164,9 +165,9 @@ assert abs(packed_ndcg(dcn_packed, y_te, m_te) - overall["dcn_vs_l1"]["l2"]) < 1
 
 # COMMAND ----------
 
-# DBTITLE 1,TrainingSet for fe.log_model (same features as serp_l2_training_set)
-FEATURES = [fe.get_feature(full_name=full_name(CFG, n)) for n in [*feature_keys(CFG), *SERP_L2_REQUEST_COLUMNS]]
+# DBTITLE 1,TrainingSet for fe.log_model (training_features, as in serp_l2_training_set)
 spine = spark.table(SPINE)
+FEATURES = training_features(fe, CFG, feature_keys(CFG), spine, SERP_L2_REQUEST_COLUMNS)
 training_set = fe.create_training_set(df=spine, features=FEATURES, label="label", exclude_columns=[])
 
 # Raw Feature View rows for a few test searches, as the endpoint will see them (lookup keys stripped).
