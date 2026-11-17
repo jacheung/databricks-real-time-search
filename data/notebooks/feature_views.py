@@ -3,8 +3,8 @@
 # MAGIC %md
 # MAGIC # Declare and materialize the clickstream Feature Views
 # MAGIC
-# MAGIC Registers every feature in `features.feature_specs` (generated from config) over `session_events` and
-# MAGIC materializes them to the Lakebase online store, where the L2 endpoints look them up:
+# MAGIC Registers every feature in the catalog (`rts_shared.features`, generated from config) over `session_events`
+# MAGIC and materializes them to the Lakebase online store, where the L2 endpoints look them up:
 # MAGIC
 # MAGIC | Group | Entity | Window | Trigger | Store |
 # MAGIC |---|---|---|---|---|
@@ -46,8 +46,8 @@ from pyspark.sql import functions as F
 
 _nb_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
 ROOT = "/Workspace" + "/".join(_nb_path.split("/")[:-3])  # this notebook is <ROOT>/data/notebooks/<name>
-sys.path[:0] = [f"{ROOT}/shared/src", f"{ROOT}/data/src"]
-from rts_data.feature_specs import feature_specs
+sys.path[:0] = [f"{ROOT}/shared/src"]
+from rts_shared.features import feature_specs, online_table_prefix
 from rts_shared.config import full_name, load_config, table
 from rts_shared.events import event_payload
 from rts_shared.kafka import producer
@@ -121,13 +121,13 @@ def materialize(group, trigger, offline):
     specs = [s for s in SPECS if s.group == group]
     pending = [s for s in specs if not list(fe.list_materialized_features(feature_name=full_name(CFG, s.name)))]
     if pending:
-        prefix = f"rts_{group}"
         fe.materialize_features(
             features=[FEATURES[s.name] for s in pending],
             offline_config=OfflineStoreConfig(catalog_name=UC["catalog"], schema_name=UC["schema"],
-                                              table_name_prefix=f"{prefix}_offline") if offline else None,
+                                              table_name_prefix=f"rts_{group}_offline") if offline else None,
             online_config=OnlineStoreConfig(catalog_name=UC["catalog"], schema_name=UC["schema"],
-                                            table_name_prefix=f"{prefix}_online", online_store_name=FS["online_store"]),
+                                            table_name_prefix=online_table_prefix(group),
+                                            online_store_name=FS["online_store"]),
             trigger=trigger)
     return {s.name: list(fe.list_materialized_features(feature_name=full_name(CFG, s.name))) for s in specs}
 
@@ -160,7 +160,8 @@ training = fe.create_training_set(df=sample, features=[FEATURES[n] for n in chec
                                   exclude_columns=[]).load_df()
 
 events = spark.table(SESSION_EVENTS).alias("e")
-window = F.col("e.event_time").between(F.col("s.event_time") - F.expr("INTERVAL 30 MINUTES"), F.col("s.event_time"))
+window = F.col("e.event_time").between(
+    F.col("s.event_time") - F.expr(f"INTERVAL {FS['session_window_minutes']} MINUTES"), F.col("s.event_time"))
 expected = (sample.alias("s")
             .join(events, (F.col("e.session_id") == F.col("s.session_id")) & window, "left")
             .groupBy("s.search_id")

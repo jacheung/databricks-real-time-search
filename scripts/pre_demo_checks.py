@@ -18,8 +18,8 @@ import urllib.request
 from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path[:0] = [os.path.join(HERE, "..", p) for p in ("shared/src", "data/src", "ml/scripts")]
-from rts_data.feature_specs import feature_specs  # noqa: E402
+sys.path[:0] = [os.path.join(HERE, "..", p) for p in ("shared/src", "ml/scripts")]
+from rts_shared.features import feature_specs  # noqa: E402
 from rts_shared.config import full_name, load_config, window_strength  # noqa: E402
 
 from databricks.sdk import WorkspaceClient  # noqa: E402

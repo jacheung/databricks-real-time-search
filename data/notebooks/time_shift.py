@@ -37,8 +37,8 @@ from datetime import date, timedelta
 
 _nb_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
 ROOT = "/Workspace" + "/".join(_nb_path.split("/")[:-3])  # this notebook is <ROOT>/data/notebooks/<name>
-sys.path[:0] = [f"{ROOT}/shared/src", f"{ROOT}/data/src"]
-from rts_data.feature_specs import feature_specs
+sys.path[:0] = [f"{ROOT}/shared/src"]
+from rts_shared.features import feature_specs
 from rts_shared.config import full_name, load_config, shift_days, table, window_strength
 
 from databricks.feature_engineering import FeatureEngineeringClient

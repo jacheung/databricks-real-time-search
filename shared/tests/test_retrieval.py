@@ -1,7 +1,12 @@
+from types import SimpleNamespace
+
+import pytest
+
 from rts_shared.retrieval import (QAC_COMPLETION_FEATURES, QAC_L2_CANDIDATE_COLUMNS, QAC_L2_REQUEST_COLUMNS,
                                   QAC_PREFIX_COLUMNS, QAC_PREFIX_PK, SERP_INDEX_COLUMNS,
                                   SERP_INDEX_PK, SERP_INDEX_TEXT, SERP_L2_CANDIDATE_COLUMNS, SERP_L2_REQUEST_COLUMNS,
-                                  filter_completions, lookup_prefix, normalize, qac_l2_records, serp_l2_records)
+                                  SERP_INDEX_SCORE, filter_completions, l2_scores, lookup_prefix, normalize,
+                                  qac_l2_records, qac_l2_scores, serp_l2_records, serp_l2_scores)
 
 
 def test_qac_prefix_table_columns():
@@ -82,3 +87,47 @@ def test_serp_l2_records_send_keys_and_each_hits_candidate_fields():
     assert records[1]["l1_rank"] == 2 and records[1]["brand"] is None
     assert serp_l2_records(hits, session_id="s1", user_id="u1")[0]["is_guest"] == 0
     assert set(records[0]) == {"session_id", "user_id", SERP_INDEX_PK, *SERP_L2_REQUEST_COLUMNS}
+
+
+class FakeEndpoints:
+    """`w` for the L2 calls: records what each endpoint was sent and answers with `predictions`."""
+    def __init__(self, predictions=None):
+        self.predictions, self.calls = predictions, []
+        self.serving_endpoints_data_plane = self
+
+    def query(self, name, dataframe_records):
+        self.calls.append((name, dataframe_records))
+        preds = self.predictions if self.predictions is not None else [0.5] * len(dataframe_records)
+        return SimpleNamespace(predictions=preds)
+
+
+QAC_ROW = {"rank": 1, "prefix_len": 2, "n_tokens": 1, "is_word_boundary": True, "pop_30d": 5, "pop_7d": 1,
+           "ctr": 0.4, "category": "Toys", "category_share": 0.8, "brand": "lego", "brand_share": 0.5,
+           "median_clicked_price": 20.0}
+SERP_HIT = {"product_id": "B01", "title": "Bag", "brand": "sony", "category": "Camera & Photo", "price": 40.0,
+            SERP_INDEX_SCORE: 0.9}
+
+
+def test_l2_scores_send_the_records_and_return_one_float_per_record():
+    w = FakeEndpoints([1, 0.25])
+    assert l2_scores(w, "rts-qac-l2", [{"a": 1}, {"a": 2}]) == [1.0, 0.25]
+    assert w.calls == [("rts-qac-l2", [{"a": 1}, {"a": 2}])]
+
+
+@pytest.mark.parametrize("predictions", [[0.1], [0.1, 0.2, 0.3], [{"score": 0.1}, {"score": 0.2}]])
+def test_l2_scores_reject_a_response_that_is_not_one_number_per_record(predictions):
+    with pytest.raises(ValueError):
+        l2_scores(FakeEndpoints(predictions), "ep", [{"a": 1}, {"a": 2}])
+
+
+def test_l2_scores_skip_the_call_without_records():
+    w = FakeEndpoints()
+    assert l2_scores(w, "ep", []) == [] and w.calls == []
+
+
+def test_qac_and_serp_l2_scores_send_their_records():
+    w = FakeEndpoints()
+    assert qac_l2_scores(w, "qac", [QAC_ROW, QAC_ROW], "s1", None) == [0.5, 0.5]
+    assert serp_l2_scores(w, "serp", [SERP_HIT], "s1", "u1") == [0.5]
+    assert w.calls == [("qac", qac_l2_records([QAC_ROW, QAC_ROW], "s1", None)),
+                       ("serp", serp_l2_records([SERP_HIT], "s1", "u1"))]

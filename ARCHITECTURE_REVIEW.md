@@ -1,0 +1,140 @@
+# Architecture review (2026-11-17)
+
+Places where a small interface could hide more of the work (deepening opportunities), found by one review across all
+tracks, plus the order to do them in. Branch `architecture`. Each track ticks off its own section here; status stays in
+[PLAN.md](PLAN.md).
+
+## Order
+
+**Phase 1: `shared/`, in the `architecture` worktree, one candidate at a time (PLAN.md rule 1).** The cross-track
+candidates rewrite code inside every track, so they land before the track work starts.
+- [x] #1 Feature catalog, with every consumer moved onto it in the same commit. Feature names stay exactly as they are
+  (a test asserts it): a rename means re-materializing Feature Views and redeploying endpoints.
+  Decided (2026-11-17): the whole spec moves to `rts_shared.features` (the app can't import `rts_data`). The app
+  computes its session tables and feature lists from it; ml keeps its model input columns as literals (a trained model
+  freezes them), guarded by tests. Still literal on purpose: the expected values in the app's freshness check (it
+  restates what each feature counts; names are tested), the `sess_last_event_type` override (open ask to data),
+  notebook checks, `demo_personas`, `scripts/_common.sh`.
+- [x] #2 L2 request contract. After #1: its "model input columns ⊆ catalog + request columns" test needs the catalog.
+  Decided (2026-11-17): `rts_shared.retrieval` owns the whole call (`l2_scores`, `qac_l2_scores`, `serp_l2_scores`,
+  taking `w` like `rts_shared.kafka`): request, endpoint query, one numeric score per candidate or `ValueError`. The
+  app keeps its timing, logging and timeouts around it; both ml benchmarks use it. The column tuples sent to the
+  endpoint are unchanged.
+- [x] ~~#7 Event shape~~: dropped (2026-11-17); see #7 below.
+- [ ] Merge into `main` (the user approves this).
+
+**Phase 2: one worktree per track, branched from `main`, in parallel.** PLAN.md's track worktree names
+(`databricks-blueprints-rts-app`/`-ml`) predate the repo split: reuse them and merge `main` if they still exist.
+- app: bug commits, then #3, then #4.
+- ml: bug commits, then #5 and #6.
+- data: bug commits, then #8.
+
+**Bugs:** each is its own commit in its track's worktree, before that track's refactor, test first (so it ships even if
+the refactor stalls; the refactor keeps the test).
+
+**Limits on parallel work:**
+- Only one worktree at a time deploys a given bundle (rule 3). Refactors and unit tests run in parallel freely.
+- Integration checks (browser, scenario Play, persona check) run after merging into `main` (rule 5). Tracks merge back
+  one at a time; the others merge `main` before continuing.
+- Live checks need the endpoints, the session pipeline and Lakebase on: batch them, then turn things off.
+
+## Candidates
+
+### Cross-track (`shared/`)
+
+**#1 Feature catalog** (owner: data; used by ml and app)
+- Files: `data/src/rts_data/feature_specs.py`, `shared/src/rts_shared/features.py`, `data/notebooks/feature_views.py`,
+  `data/notebooks/demo_personas.py`, `ml/src/rts_ml/qac_l2.py`, `ml/src/rts_ml/serp_l2.py`,
+  `app/backend/rts_app/service.py`, `app/backend/rts_app/main.py`, `scripts/_common.sh`.
+- Problem: names are built twice (`feature_specs()`, `feature_keys()`), kept equal only by a test. `_30m`/`_30d`/`_7d`
+  names are hardcoded in both models' input columns, the app's freshness expectations and a shell script. Source and
+  window per group, and the `rts_{group}_online` table names, live only in the `feature_views` notebook. "Engaged" is
+  defined three times. A window change in config passes every test and breaks serving.
+- Solution: one module owns each feature's name, keys, group, window and online table; everything else reads it.
+- Benefits: a rename or window change is one edit; a test can check each model's input columns against the catalog.
+- Open: this reopens `features.py`'s "names only, no definitions" contract. Decide how much of the definition moves.
+
+**#2 L2 request contract** (owner: ml; used by app)
+- Files: `shared/src/rts_shared/retrieval.py`, `app/backend/rts_app/main.py`, `app/backend/rts_app/service.py`.
+- Problem: `qac_l2_records`/`serp_l2_records` slice column tuples by position (`[1:]`, `[2:]`), so inserting a column
+  changes the request silently. SERP checks the endpoint returns one score per hit; QAC doesn't. `SERP_INDEX_COLUMNS`
+  omits the `score` that `serp_l2_records` reads.
+- Solution: one module per surface owns the whole L2 call: request from L1 rows, response checks, scores in L1 order.
+- Benefits: same checks on both surfaces; the request format is tested in one place against a fake endpoint.
+
+**#7 Event shape** (owner: data; touches `shared/events.py`). **Dropped (2026-11-17); don't re-suggest unless the
+reasons below stop holding.**
+- Why dropped: the Spark writer's `'Z'` is true because `kafka_stream.py` sets `spark.sql.session.timeZone` to UTC,
+  so both writers emit the same ms UTC string. `shared/` can't depend on pyspark (the app ships it without Spark),
+  and the two patterns are in different formatting languages, so a shared constant removes nothing. Event ids only
+  need to be unique (dedup keys on them; nothing parses them). The two scenario cut-offs serve different purposes:
+  `demo_scenarios` stops before the search QAC/SERP predicts; Play stops at the last click or cart so one event
+  times all three session tables (app logic, #3). The one real duplicate is a data bug below.
+- Files: `shared/src/rts_shared/events.py`, `data/notebooks/kafka_stream.py`, `data/src/rts_data/datagen.py`,
+  `shared/src/rts_shared/scenarios.py`.
+- Problem: Kafka JSON is written twice, by `event_payload` (tested) and a Spark `date_format` (untested); ms precision
+  was already a bug once (2026-10-30). The event id format is copied three times. Scenario cut-off rules are split
+  between `demo_scenarios` and the app's `play_scenario`.
+- Solution: one module owns the event shape for Python and Spark, ids and timestamps included.
+- Benefits: one round-trip test covers simulator → Kafka → scenario replay.
+
+### app
+
+**#3 Request handling in `main.py`**
+- Files: `app/backend/rts_app/main.py` (no tests), `app/backend/rts_app/service.py`, `app/tests/test_service.py`.
+- Problem: importing `main.py` creates a `WorkspaceClient`, lists Lakebase endpoints, opens pools and starts a thread,
+  so it can't be tested. `check_personas` rebuilds SERP L1 and calls L2 with no timeout (~38 × (1 + personas) calls).
+  QAC and SERP share one 8-worker `L2_POOL`, so a slow SERP call eats into QAC's 36 ms timeout. Six endpoints each
+  hold their own Lakebase SQL.
+- Solution: QAC, SERP, Play → freshness and the persona check behind one seam with two adapters (real clients, and
+  fakes built from `test_service.py`'s); `main.py` shrinks to wiring.
+- Benefits: the freshness loop, the real timeout path, 404/503 paths and the persona check become testable.
+
+**#4 QAC and SERP fetching and timing in `App.jsx`**
+- Problem: stale-response handling written twice; QAC has no error path; server timings re-summed in four places;
+  `PAGES = 4` must match `SERP_N / PAGE_SIZE`; stage names matched by index; no frontend tests.
+- Solution: one hook per surface returning result, status and timings; rendering only reads them.
+- Benefits: sequencing and errors in one place, testable with a fake `fetch`. Lower leverage than #3.
+
+### ml
+
+**#5 L2 training sets**
+- Files: `ml/src/rts_ml/qac_l2.py`, `ml/src/rts_ml/serp_l2.py`, `ml/notebooks/qac_l2_lgbm.py`,
+  `ml/notebooks/serp_l2_training_set.py`, `ml/notebooks/serp_l2_dcnv2.py`, `ml/tests_torch/test_serp_l2_dcn.py`.
+- Problem: everything before the shared feature → matrix transform is untested notebook code (labels, joins, splits,
+  packing; feature list copied into three notebooks). The DCN notebook logs its signature from a second training set.
+  `add_crosses` is copied; the shared L2 helpers live in `qac_l2.py`. QAC and SERP made opposite calls on
+  `sess_last_event_type`, and nothing asserts QAC's is safe. The torch test re-implements the packing.
+- Solution: one module per surface builds the training set; notebooks become thin callers.
+- Benefits: labels, the L1 join and packing become testable; the torch test runs production code.
+
+**#6 L2 endpoint deploys**
+- Files: `ml/src/rts_ml/serving.py`, `ml/notebooks/l2_endpoint.py`, `shared/src/rts_shared/lakebase.py`,
+  `ml/notebooks/serp_l1_ai_search.py`.
+- Problem: `ensure_endpoint` compares only model name, version and scale-to-zero, so a workload size or type change
+  reports "unchanged". `l2_endpoint` deploys the highest registered version, not this run's. The wait-until-ready loop
+  is written three times.
+- Solution: one module takes this run's model and the config and makes the endpoint match.
+- Benefits: `test_serving.py`'s fakes cover the whole interface.
+
+### data
+
+**#8 Demo operations logic**
+- Files: `data/notebooks/time_shift.py`, `teardown.py`, `demo_scenarios.py`, `demo_personas.py`,
+  `scripts/pre_demo.sh`, `scripts/pre_demo_checks.py`, `scripts/_common.sh`.
+- Problem: scenario and persona selection rules and the orphan filter are untested notebook code. `teardown` treats any
+  error as "absent". Scripts hardcode job and task keys that must match `ml/resources/*.yml`. `pre_demo_checks` and
+  `time_shift` disagree on "fresh" (UTC vs local date).
+- Solution: selection and freshness rules into `rts_data`; scripts read job names from the bundles or config.
+- Benefits: lower leverage, but it's the code that broke in the online store purge.
+
+## Bugs (fix directly, test first, one commit each)
+
+- [ ] app: `_online_tables` fills its cache key by key, then raises 503 on a later key; the next call returns the
+  partial cache and freshness raises `KeyError` (500). `main.py:151-167`.
+- [ ] app: `bench_qac_l1` defined twice; `import itertools` twice. `main.py`.
+- [x] app: QAC doesn't check the endpoint returned one score per candidate. `service.py:38`. Fixed by #2.
+- [ ] app: QAC fetch has no error path; a 500 body is stored as the result and the render throws. `App.jsx:736-741`.
+- [ ] ml: `ensure_endpoint` ignores workload size and type. `serving.py:27-30`.
+- [ ] ml: `l2_endpoint` deploys the highest registered version, not this run's. `l2_endpoint.py:62`.
+- [ ] data: `clickstream_sim.py:90` redefines the required event fields instead of importing `REQUIRED_FIELDS`.

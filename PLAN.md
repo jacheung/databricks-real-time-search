@@ -2,7 +2,8 @@
 
 Top-level plan for this blueprint: the question, how the tracks work together, shared resources, contracts and
 decisions. Each track keeps its own checklist: [data/PLAN.md](data/PLAN.md), [ml/PLAN.md](ml/PLAN.md),
-[app/PLAN.md](app/PLAN.md). Deferred scope lives in [PARKING_LOT.md](PARKING_LOT.md).
+[app/PLAN.md](app/PLAN.md). Deferred scope lives in [PARKING_LOT.md](PARKING_LOT.md). The architecture review
+(2026-11-17) and its order of work live in [ARCHITECTURE_REVIEW.md](ARCHITECTURE_REVIEW.md).
 
 **Question:** Does a session-aware L2 reranker improve QAC and SERP relevance enough to justify its latency, and can
 Databricks serve both within real-time budgets (QAC < 40 ms, SERP < 400 ms, both server-side p95 measured in the app;
@@ -116,10 +117,10 @@ Checked by tests, not by sessions agreeing. Change one only under rule 1.
 |---|---|---|
 | Config schema (`rts_shared.config`, `shared/configs/example.yml`) | all (rule 1) | all |
 | `EVENT_FIELDS`, `event_payload` (`rts_shared.events`) | data | app (scenario Play) |
-| Feature keys (`rts_shared.features`) | data | ml |
+| Feature catalog: `feature_specs`, `feature_keys`, `online_table_prefix` (`rts_shared.features`) | data | ml, app |
 | `SCENARIO_COLUMNS`, `replay` (`rts_shared.scenarios`) | data | app |
 | `QAC_PREFIX_COLUMNS`, `lookup_prefix`, `filter_completions` (`rts_shared.retrieval`) | ml | app |
-| `QAC_L2_CANDIDATE_COLUMNS`, `QAC_L2_REQUEST_COLUMNS`, `qac_l2_records` | ml | app |
+| L2 calls: `*_L2_REQUEST_COLUMNS`, `qac_l2_scores`, `serp_l2_scores` (one score per candidate, or `ValueError`) | ml | app, ml benchmarks |
 | `SERP_INDEX_COLUMNS`, `SERP_INDEX_TEXT` | ml | app |
 | Kafka client and Lakebase helpers (`rts_shared.kafka`, `rts_shared.lakebase`) | data | app, ml |
 

@@ -23,7 +23,7 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "shared", "src"))
 from rts_shared.config import full_name, load_config  # noqa: E402
-from rts_shared.retrieval import serp_l2_records  # noqa: E402
+from rts_shared.retrieval import l2_scores, serp_l2_records, serp_l2_scores  # noqa: E402
 
 from databricks.sdk import WorkspaceClient  # noqa: E402
 
@@ -58,14 +58,13 @@ def main(config_path):
     session_id, user_id, hits = one_search(w, cfg)
     requests = {n: serp_l2_records((hits * (n // len(hits) + 1))[:n], session_id, user_id) for n in SIZES}
 
-    def query(name, records):
-        return w.serving_endpoints_data_plane.query(name=name, dataframe_records=records).predictions
+    def query(name, records):  # requests are built up front, so only the call is timed
+        return l2_scores(w, name, records)  # raises unless every candidate gets a score
 
     results = {"session_id": session_id, "user_id": user_id, "candidates": len(hits)}
     for label, name in endpoints.items():
         scores = query(name, requests[200])
-        assert len(scores) == 200, f"{name} returned {len(scores)} scores for 200 candidates"
-        guest = query(name, serp_l2_records(hits, session_id, None))
+        guest = serp_l2_scores(w, name, hits, session_id, None)
         assert scores != guest, f"{name}: logged-in and guest requests score the same; user lookups not applied?"
         for n, records in requests.items():
             for _ in range(WARMUP):
