@@ -9,8 +9,8 @@ tracks, plus the order to do them in. Branch `architecture`. Each track ticks of
 - **Where things are:** phase 1 (#1, #2) and the app track (bugs, #3, #4) are merged into `main` and pushed
   (`6624409`). Work happens in the worktree `~/GitHub/databricks-real-time-search-arch` on branch `architecture`
   (at `main` plus this note). One track at a time, in this worktree only.
-- **Next:** the ml track (bugs, #6, #5) is done on `architecture`, unmerged. Open before a SERP retrain: the Feature
-  Engineering user/item lookup bug (Bugs). QAC v2 is registered, not deployed (v1 serves). Then data: the
+- **Next:** the ml track (bugs, #6, #5) is done on `architecture`, unmerged. Open: training on time-shifted history (Bugs) blocks
+  retraining on fevm until the data is rebuilt. QAC v2 is registered, not deployed (v1 serves). Then data: the
   `clickstream_sim` bug, then #8.
 - **How we work (agreed with the user):**
   - Present the design choices before coding, test first, one commit per item.
@@ -158,7 +158,7 @@ with a fake `fetch`. `PAGES` is gone (pages follow the response), and stages are
   equals the full-spine training set bit for bit (the refactor is not the cause), but Feature Engineering returns
   different user/item (Delta, sliding-window) features for a 5-search spine than for the full spine, and SQL counts
   from `session_events` side with neither consistently (user clicks: small spine right; item clicks: full spine right).
-  It passed on 2026-11-12, so something on fevm changed since. Open; see the bug below.
+  Cause: `session_events` was time-shifted after the labels (see Bugs); the check caught it.
 
 **#6 L2 endpoint deploys**
 - Files: `ml/src/rts_ml/serving.py`, `ml/notebooks/l2_endpoint.py`, `shared/src/rts_shared/lakebase.py`,
@@ -197,7 +197,11 @@ with a fake `fetch`. `PAGES` is gone (pages follow the response), and stages are
   Decided (2026-11-17): training tasks set task value `version` (`lgbm_version`); endpoint tasks read it from
   `train_task` with `default=""` and serve the latest when run alone. Same fix in `serp_query_embedding`. Live on
   fevm: `--only qac_l2_endpoint` fell back to v1, "unchanged". The task-value path itself runs on the next retrain.
-- [ ] ml/data: Feature Engineering's point-in-time user/item (Delta) features differ by spine size, and each path
-  disagrees with SQL on one feature (2026-11-17, `serp_l2_dcnv2` parity check; diagnostic notebook
-  `real-time-search/scratch/serp_l2_parity_diag` on fevm). Blocks the next SERP retrain. Not caused by #5.
+- [ ] ml/data: training ran on time-shifted history (found 2026-11-17 by `serp_l2_dcnv2`'s parity check). `time_shift`
+  moved `session_events` +120 h (UPDATEs 2026-11-16 23:37 and 2026-11-17 18:25 UTC); labels and the Kafka copy keep
+  their dates, which `time_shift.py` says means don't retrain. Training sets over the full spine compute user/item
+  features from the shifted source (5 days off their labels); small spines inside the materialized range (window ends
+  2026-10-28 onward) read the pre-shift offline tables (inferred from one user and one item: offline 3 = unshifted
+  count 3, full spine 6 = shifted count). QAC v2 (registered today, not deployed) trained on the shifted features;
+  nothing in QAC checked. Not an FE bug and not #5. Diagnostic: `real-time-search/scratch/serp_l2_parity_diag`.
 - [ ] data: `clickstream_sim.py:90` redefines the required event fields instead of importing `REQUIRED_FIELDS`.
