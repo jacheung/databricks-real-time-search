@@ -18,11 +18,11 @@ SESSION_NUMERIC = ("sess_n_clicks_30m", "sess_n_carts_30m", "sess_n_searches_30m
 USER_NUMERIC = ("user_median_price_30d", "user_n_clicks_30d", "user_n_carts_30d")
 CROSSES = ("sess_cat_share", "cat_is_last", "brand_is_last", "user_cat_share", "price_gap_session", "price_gap_user")
 IDENTITIES = ("category", "brand")  # matched against the session through the crosses, never scored directly
-EVENT_TYPE_CODES = {"search": 0, "click": 1, "add_to_cart": 2}
 LGBM_PARAMS = {"objective": "lambdarank", "num_leaves": 31, "learning_rate": 0.05, "n_estimators": 1000,
                "min_child_samples": 20, "verbose": -1}
 EARLY_STOPPING_ROUNDS = 50
-MODEL_COLUMNS = (*SESSION_NUMERIC, "sess_last_event_type", *USER_NUMERIC,
+# Left out: `sess_last_event_type`, always the current search in training but the click or cart before at serving.
+MODEL_COLUMNS = (*SESSION_NUMERIC, *USER_NUMERIC,
                  *(c for c in QAC_L2_REQUEST_COLUMNS if c not in IDENTITIES), *CROSSES)
 
 
@@ -51,9 +51,7 @@ def add_crosses(df: pd.DataFrame) -> pd.DataFrame:
 
 def model_matrix(df: pd.DataFrame) -> pd.DataFrame:
     """Raw candidate rows (features + request fields) -> the float matrix LightGBM scores, in MODEL_COLUMNS order."""
-    out = add_crosses(df)
-    out["sess_last_event_type"] = out["sess_last_event_type"].map(EVENT_TYPE_CODES)
-    return out[list(MODEL_COLUMNS)].astype(float)
+    return add_crosses(df)[list(MODEL_COLUMNS)].astype(float)
 
 
 def rank_metrics(df: pd.DataFrame, score: str, group: str = "group_id", label: str = "label",

@@ -189,8 +189,8 @@ Design agreed 2026-11-03 (plan: ~/.claude/plans/streamed-fluttering-turing.md):
     meant nothing), and **`sess_last_event_type` is always `search`**: `ColumnSelection` includes the event at the
     label time while window counts exclude it (`sess_n_searches_30m` is 0 on first searches). It's constant in
     training but the previous event at serving, so SERP drops it; `has_session` = an earlier search, `has_item` =
-    count > 0 (same input whether the online store returns 0 or null). QAC reads it too, but LightGBM never split on a
-    constant, so its scores can't move. Asked data (top-level cross-track table)
+    count > 0 (same input whether the online store returns 0 or null). QAC read it too (LightGBM never split on a
+    constant); dropped from QAC's model columns 2026-11-17, effective at its next retrain. Asked data (top-level cross-track table)
 - [x] `serp_l2_dcnv2` (Serverless GPU A10, AI env v6; run `655125908313421`, 8 min): DCNv2 trains in 12 s, best
   epoch 2; LightGBM best iteration 7. Raw Feature View rows score like the packed matrix (max diff 1.9e-6), and both
   registered models reload and score them the same. `serp_ranker_dcnv2` v2 + `serp_ranker_lgbm` v1 (comparator,

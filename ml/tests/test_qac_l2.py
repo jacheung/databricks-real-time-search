@@ -76,9 +76,12 @@ def test_the_model_sees_numbers_only_never_brand_or_category_identities():
     assert not {"category", "brand", "sess_last_category", "sess_last_brand", "session_id", "user_id"} & set(X)
 
 
-def test_last_event_type_is_encoded_and_missing_stays_missing():
-    X = model_matrix(pd.concat([rows(sess_last_event_type="add_to_cart"), rows(sess_last_event_type=None)]))
-    assert X["sess_last_event_type"].iloc[0] == 2 and math.isnan(X["sess_last_event_type"].iloc[1])
+def test_last_event_type_never_reaches_the_model():
+    # Training always sees the current search as the session's last event (ColumnSelection includes the event at the
+    # label time); at serving it is the click or cart before. Same call as SERP (ml/PLAN.md, 2026-11-17).
+    a, b = model_matrix(rows(sess_last_event_type="search")), model_matrix(rows(sess_last_event_type="click"))
+    assert a.values.tolist() == b.values.tolist()
+    assert not any("event_type" in c for c in MODEL_COLUMNS)
 
 
 def test_rank_metrics_per_group_mrr_at_5_and_success_at_1():
