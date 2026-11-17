@@ -205,6 +205,16 @@ Static (L1) and Session-aware (L1 + L2). Only the click sequence is pre-baked; f
 - [ ] `07_latency_bench`: per-stage p50/p95, L1-only vs L1+L2. Started: `/api/bench/qac_l1` and `/api/bench/qac_l2`
   (from inside the app; `gap_ms` idles before each call, untimed, 1 test). Still needed: the fallback rate at typing
   pace (the app logs give it), SERP embed + search
+- [ ] QAC L2 load test (2026-11-17, paused): capacity of `rts-qac-l2` (CPU Medium = 8–16 concurrent requests per the
+  docs; the endpoint idles at 8), then users from typing assumptions (`rts_app.load.users_for_qps`). Built:
+  `rts_app.load` (open-loop schedule, latency from the scheduled time, 6 tests), `/api/load/qac_l2` (POST/GET/DELETE;
+  generated in the app because the route-optimized endpoint takes only OAuth; real full L1 top-20 payloads, real
+  user and session keys) and `scripts/load_qac_l2.py` (step → spike → 30 min soak, scrapes the endpoint's metrics
+  export each minute). Smoke at 50 QPS: p50 30, p95 38, p99 48 ms, 0 errors, so ~10% of calls already exceed the 36 ms
+  `qac_l2` timeout. The first full run is void: at 50 QPS every call stalled for seconds at once (send lag p99 833 ms,
+  no app errors), the knee rule read that as the client limit and sized spike/soak at 25 QPS. Next: judge steps on
+  10 s windows and log stalls separately; log the SDK's data-plane token refreshes to test the stall hypothesis; rerun.
+  Also report: the app's `L2_POOL` (8 workers) caps one app instance at ~270 L2 QPS at ~30 ms.
 
 ### Step 6b: Sign in (personas), decoupled from the clickstream
 - [x] Step 0, user history isolated (2026-11-05, local SDK against both L2 endpoints, no session, guest vs user): it

@@ -12,6 +12,7 @@ import itertools
 import itertools
 import logging
 import os
+import random
 import string
 import threading
 import time
@@ -23,6 +24,7 @@ from typing import Literal
 
 import psycopg
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.core import Config
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from psycopg.rows import dict_row
@@ -32,6 +34,7 @@ from rts_app.service import (latency_stats, play_scenario, qac, rows_to_dicts, s
                              expected_session_features, freshness_breakdown, l2_inputs, landed, time_calls,
                              user_feature_values, with_timeout, RecentValues, SESSION_TABLES, persona_lift, ranked_top,
                              trending, index_query)
+from rts_app.load import LoadRun, summarize
 from rts_shared.config import full_name, load_config
 from rts_shared.kafka import producer as kafka_producer
 from rts_shared.lakebase import branch, features_database
@@ -255,13 +258,6 @@ def bench_qac_l1(n: int = Query(100, ge=1, le=500)):
     return {"lookup": latency_stats(time_calls(lambda: prefix_rows(next(prefixes)), n))}
 
 
-@app.get("/api/bench/qac_l1")
-def bench_qac_l1(n: int = Query(100, ge=1, le=500)):
-    """QAC L1 (Lakebase prefix lookup) latency from inside the app, back-to-back, cycling short and long prefixes."""
-    prefixes = itertools.cycle(["a", "ca", "cam", "usb", "dog f", "iphone c", "nike shoes", "s", "lap", "wireless e"])
-    return {"lookup": latency_stats(time_calls(lambda: prefix_rows(next(prefixes)), n))}
-
-
 @app.get("/api/bench/qac_l2")
 def bench_qac_l2(n: int = Query(100, ge=1, le=500), session_id: str | None = None, user_id: str | None = None,
                  gap_ms: float = Query(0, ge=0, le=2000)):
@@ -272,6 +268,74 @@ def bench_qac_l2(n: int = Query(100, ge=1, le=500), session_id: str | None = Non
     return {f"candidates_{k}": latency_stats(time_calls(lambda: qac_l2_scores(rows[:k], session_id, user_id), n,
                                                          gap_ms=gap_ms))
             for k in sizes} | {"session_id": session_id, "user_id": user_id, "gap_ms": gap_ms}
+
+
+# QAC L2 load test (scripts/load_qac_l2.py drives it): open-loop QPS phases on their own client and thread pool, so the
+# demo's L2_POOL isn't involved. Requests are real L1 top-`candidates` rows for random short prefixes, with real user
+# and session keys, so every call does the endpoint's online-store lookups. One run at a time.
+LOAD = {"run": None, "phases": [], "info": {}}
+
+
+def _load_requests(n_prefixes: int = 300, n_keys: int = 500) -> tuple[list[list[dict]], list[str], list[str]]:
+    with pool.connection() as conn:
+        # Prefixes with a full L1 top `candidates` (popular ones, as typed): every request carries the real payload.
+        prefixes = [r["prefix"] for r in conn.execute(
+            f"SELECT prefix FROM {_table('qac_prefix_online')} WHERE length(prefix) <= 6 GROUP BY prefix "
+            "HAVING count(*) >= %s ORDER BY random() LIMIT %s", (QAC_L2["candidates"], n_prefixes))]
+        rows = conn.execute(f"SELECT * FROM {_table('qac_prefix_online')} WHERE prefix = ANY(%s) AND rank <= %s "
+                            "ORDER BY prefix, rank", (prefixes, QAC_L2["candidates"])).fetchall()
+    by_prefix: dict[str, list[dict]] = {}
+    for r in rows:
+        by_prefix.setdefault(r["prefix"], []).append(r)
+    with features_pool.connection() as conn:
+        users = [r["user_id"] for r in conn.execute(
+            f"SELECT DISTINCT user_id FROM {next(iter(user_tables().values()))} LIMIT %s", (n_keys,))]
+        sessions = [r["session_id"] for r in conn.execute(
+            f"SELECT DISTINCT session_id FROM {session_tables()['window']} LIMIT %s", (n_keys,))]
+    # Sessions age out of the online table; unknown ones score as no history, like a new visitor.
+    return list(by_prefix.values()), users, sessions or [f"load-{uuid.uuid4().hex[:10]}" for _ in range(n_keys)]
+
+
+@app.post("/api/load/qac_l2")
+def start_load_qac_l2(phases: str = Query(..., description="qps:seconds,qps:seconds,..."),
+                      workers: int = Query(128, ge=1, le=512)):
+    if LOAD["run"] and not LOAD["run"].done:
+        raise HTTPException(409, "a load run is already running")
+    plan = [(float(q), float(s)) for q, s in (p.split(":") for p in phases.split(","))]
+    if any(q <= 0 or q > 3000 for q, _ in plan) or sum(s for _, s in plan) > 3600:
+        raise HTTPException(400, "each phase needs 0 < QPS <= 3000, and a run lasts at most an hour")
+    requests, users, sessions = _load_requests()
+    client = WorkspaceClient(config=Config(max_connection_pools=workers, max_connections_per_pool=workers))
+
+    def call():
+        client.serving_endpoints_data_plane.query(name=QAC_L2["endpoint"], dataframe_records=qac_l2_records(
+            random.choice(requests), random.choice(sessions), random.choice(users)))
+
+    LOAD.update(run=LoadRun(call, plan, workers), phases=plan,
+                info={"started": datetime.now(timezone.utc).isoformat(), "workers": workers,
+                      "prefixes": len(requests), "users": len(users), "sessions": len(sessions),
+                      "candidates_mean": round(sum(map(len, requests)) / len(requests), 1)})
+    LOAD["run"].start()
+    return LOAD["info"] | {"phases": plan}
+
+
+@app.get("/api/load/qac_l2")
+def load_qac_l2(window_s: float = Query(10, gt=0)):
+    run = LOAD["run"]
+    if run is None:
+        raise HTTPException(404, "no load run yet")
+    out = LOAD["info"] | {"phases": LOAD["phases"], "done": run.done, "n": len(run.records),
+                          "last_error": run.last_error}
+    if run.done:
+        out["summary"] = summarize(list(run.records), LOAD["phases"], window_s, APP["timeouts_ms"]["qac_l2"])
+    return out
+
+
+@app.delete("/api/load/qac_l2")
+def stop_load_qac_l2():
+    if LOAD["run"]:
+        LOAD["run"].stop()
+    return {"stopping": bool(LOAD["run"])}
 
 
 @app.get("/api/scenarios")
