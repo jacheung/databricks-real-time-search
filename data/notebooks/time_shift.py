@@ -33,13 +33,13 @@ dbutils.library.restartPython()
 # DBTITLE 1,Load config
 import json
 import sys
-from datetime import date, timedelta
+from datetime import datetime, timedelta, timezone
 
 _nb_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
 ROOT = "/Workspace" + "/".join(_nb_path.split("/")[:-3])  # this notebook is <ROOT>/data/notebooks/<name>
 sys.path[:0] = [f"{ROOT}/shared/src"]
 from rts_shared.features import feature_specs
-from rts_shared.config import full_name, load_config, shift_days, table, window_strength
+from rts_shared.config import full_name, load_config, shift_days, stale_batch_features, table, window_strength
 
 from databricks.feature_engineering import FeatureEngineeringClient
 from databricks.sdk import WorkspaceClient
@@ -49,12 +49,13 @@ CFG = load_config(dbutils.widgets.get("config_path"))
 SESSION_EVENTS = table(CFG, "session_events")
 BATCH = [s for s in feature_specs(CFG) if s.group in ("user", "item")]
 fe, w = FeatureEngineeringClient(), WorkspaceClient()
+TODAY = datetime.now(timezone.utc).date()  # UTC, as the materialization cron and pre_demo_checks use
 
 # COMMAND ----------
 
 # DBTITLE 1,Shift session_events by whole days
 first = spark.sql(f"SELECT MIN(DATE(event_time)) AS d FROM {SESSION_EVENTS}").first()["d"]
-DAYS = shift_days(CFG, first_event_date=first, today=date.today())
+DAYS = shift_days(CFG, first_event_date=first, today=TODAY)
 if DAYS:
     spark.sql(f"UPDATE {SESSION_EVENTS} SET event_time = event_time + INTERVAL {DAYS} DAYS")
 dates = spark.sql(f"SELECT MIN(event_time) AS lo, MAX(event_time) AS hi FROM {SESSION_EVENTS}").first()
@@ -86,9 +87,9 @@ assert all(s.endswith("SUCCESS") for s in states.values()), states
 
 # COMMAND ----------
 
-# DBTITLE 1,Check: the latest windows are back to full strength
+# DBTITLE 1,Check: the latest windows end today at full strength (rts_shared.config.stale_batch_features)
 # Count features sum to about the same total in every full window; a stale history shows as totals falling towards the
-# latest window-end date. The latest must be within 5% of the best day.
+# latest window-end date.
 strength = {}
 for spec in BATCH:
     if spec.op != "Count":
@@ -96,8 +97,8 @@ for spec in BATCH:
     daily = spark.sql(f"SELECT DATE(event_time) AS d, SUM({spec.name}) AS s FROM {offline[spec.name]} GROUP BY 1").collect()
     strength[spec.name] = window_strength([(r["d"], float(r["s"])) for r in daily])
 print(json.dumps(strength, indent=2))
-weak = {k: v for k, v in strength.items() if v["ratio"] < 0.95}
-assert not weak, f"latest windows below 95% of the best day: {weak}"
+stale = stale_batch_features(strength, TODAY)
+assert not stale, f"latest windows not ending today ({TODAY}) at full strength: {stale}"
 
 summary = {"shift_days": DAYS, "history": [str(dates["lo"]), str(dates["hi"])], "jobs": states, "strength": strength}
 dbutils.notebook.exit(json.dumps(summary))

@@ -198,3 +198,16 @@ def test_history_shift_is_how_far_session_events_moved_past_the_labels():
     last_search = datetime(2026, 11, 12, 0, 4, 57, 405000)
     assert history_shift(history_last=last_search, labels_last=last_search) == timedelta(0)
     assert history_shift(history_last=last_search + timedelta(days=5), labels_last=last_search) == timedelta(days=5)
+
+
+def test_batch_features_are_current_when_every_latest_window_ends_today_at_full_strength():
+    # time_shift and pre_demo_checks used to disagree: one asserted strength only, the other also "ends today (UTC)".
+    from datetime import date
+
+    from rts_shared.config import stale_batch_features
+
+    today = date(2026, 11, 17)
+    full = {"latest_date": "2026-11-17", "latest": 98, "best": 100, "ratio": 0.98}
+    assert stale_batch_features({"a": full}, today) == {}
+    weak, old = {**full, "ratio": 0.9}, {**full, "latest_date": "2026-11-16"}
+    assert stale_batch_features({"a": full, "b": weak, "c": old}, today) == {"b": weak, "c": old}

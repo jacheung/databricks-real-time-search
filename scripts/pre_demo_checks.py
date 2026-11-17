@@ -20,12 +20,11 @@ from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path[:0] = [os.path.join(HERE, "..", p) for p in ("shared/src", "ml/scripts")]
 from rts_shared.features import feature_specs  # noqa: E402
-from rts_shared.config import full_name, load_config, window_strength  # noqa: E402
+from rts_shared.config import full_name, load_config, stale_batch_features, window_strength  # noqa: E402
 
 from databricks.sdk import WorkspaceClient  # noqa: E402
 
 APP = "rts-search"            # app/resources/app.yml
-MIN_STRENGTH = 0.95           # latest window vs the best day (time_shift asserts the same)
 FRESHNESS_WAIT_S = 360        # the session pipeline needs ~4 min after a start to catch up on its backlog
 
 
@@ -56,9 +55,9 @@ def query_embedding(w, cfg, config_path):
 
 
 def batch_features_fresh(w, cfg):
-    """Latest window ends today (UTC) and holds >= MIN_STRENGTH of the best day: stale history fades it."""
+    """Latest window ends today (UTC) at full strength (`stale_batch_features`, as time_shift asserts)."""
     warehouse = next(iter(w.warehouses.list())).id  # any warehouse; serverless ones start on demand
-    today, report = datetime.now(timezone.utc).date().isoformat(), {}
+    report = {}
     for spec in feature_specs(cfg):
         if spec.group not in ("user", "item") or spec.op != "Count":
             continue
@@ -69,8 +68,8 @@ def batch_features_fresh(w, cfg):
             wait_timeout="50s")
         report[spec.name] = window_strength([(datetime.fromisoformat(d).date(), float(s))
                                              for d, s in r.result.data_array])
-    ok = all(v["latest_date"] == today and v["ratio"] >= MIN_STRENGTH for v in report.values())
-    return ok, {k: (v["latest_date"], v["ratio"]) for k, v in report.items()}
+    stale = stale_batch_features(report, datetime.now(timezone.utc).date())
+    return not stale, {k: (v["latest_date"], v["ratio"]) for k, v in report.items()}
 
 
 def _app_call(w, path, method="GET", timeout=180):
