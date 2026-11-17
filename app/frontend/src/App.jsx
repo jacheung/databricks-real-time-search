@@ -6,6 +6,7 @@ const L2_STATUS = {
   timeout: "L2 timed out: showing the L1 order",
   error: "L2 failed: showing the L1 order",
 };
+const QAC_FAILED = "Suggestions failed";
 
 // How L2 moved an item vs the L1 column: "new" if it came from below L1's shown top `shown`.
 function rankChange(c, position, shown) {
@@ -734,11 +735,13 @@ export default function App() {
       if (session) params.set("session_id", session.session_id);
       if (userId) params.set("user_id", userId);
       fetch(`/api/qac?${params}`)
-        .then((r) => r.json())
+        .then((r) => (r.ok ? r.json() : r.text().then((t) => Promise.reject(new Error(t)))))
         .then((res) => {
           if (seq !== latest.current) return; // drop responses to older keystrokes
           setResult({ ...res, clock: pressed === null ? null : { pressed, sent, received: performance.now() } });
-        });
+          setError((e) => (e?.startsWith(QAC_FAILED) ? null : e)); // the next good keystroke clears its own error
+        })
+        .catch((e) => seq === latest.current && setError(`${QAC_FAILED}: ${e.message}`));
     }, cfg.qac_debounce_ms);
     return () => clearTimeout(t);
   }, [q, session, userId, cfg.qac_debounce_ms]);
