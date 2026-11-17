@@ -52,7 +52,8 @@ from pyspark.sql.window import Window
 _nb_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
 ROOT = "/Workspace" + "/".join(_nb_path.split("/")[:-3])  # this notebook is <ROOT>/ml/notebooks/<name>
 sys.path[:0] = [f"{ROOT}/shared/src", f"{ROOT}/ml/src"]
-from rts_ml.qac_l2 import CROSSES, MODEL_COLUMNS, fit_ranker, score, slice_report
+from rts_ml.l2 import fit_ranker, slice_report
+from rts_ml.qac_l2 import CROSSES, MODEL_COLUMNS, model_matrix, rank_metrics, score
 from rts_ml.qac_l2_model import QacRanker
 from rts_shared.config import full_name, load_config, model_name, resolve_auto, table
 from rts_shared.features import feature_keys
@@ -155,7 +156,7 @@ cutoff = train_pdf["event_time"].max() - pd.Timedelta(days=L2["valid_days"])
 with_positive = train_pdf.groupby("group_id")["label"].transform("max") == 1  # groups L1 missed teach nothing
 fit_rows, valid_rows = train_pdf[with_positive & (train_pdf["event_time"] < cutoff)], \
     train_pdf[with_positive & (train_pdf["event_time"] >= cutoff)]
-ranker = fit_ranker(fit_rows, valid_rows)
+ranker = fit_ranker(fit_rows, valid_rows, matrix=model_matrix)
 print(f"{fit_rows['group_id'].nunique()} train / {valid_rows['group_id'].nunique()} valid groups; "
       f"best iteration {ranker.best_iteration_}")
 
@@ -173,7 +174,8 @@ test_pdf["guest"] = test_pdf["user_id"].isna().map({True: "guest", False: "logge
 test_pdf["l1"], test_pdf["l2"] = -test_pdf["l1_rank"], score(ranker, test_pdf)
 
 # JSON round trip: slice values come back as numpy scalars, which MLflow and the exit payload can't serialize.
-report = json.loads(json.dumps(slice_report(test_pdf, ["search", "guest", "prefix_len", "intent"]),
+report = json.loads(json.dumps(slice_report(test_pdf, ["search", "guest", "prefix_len", "intent"],
+                                            per_group=rank_metrics, metrics=("mrr", "success1")),
                                default=lambda o: o.item()))
 report_df = pd.DataFrame(report).astype({"value": str})  # slice values mix strings and prefix lengths
 display(report_df)

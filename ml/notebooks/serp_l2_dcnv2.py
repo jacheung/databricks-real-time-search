@@ -50,7 +50,7 @@ from pyspark.sql import functions as F
 _nb_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
 ROOT = "/Workspace" + "/".join(_nb_path.split("/")[:-3])  # this notebook is <ROOT>/ml/notebooks/<name>
 sys.path[:0] = [f"{ROOT}/shared/src", f"{ROOT}/ml/src"]
-from rts_ml.qac_l2 import fit_ranker, slice_report
+from rts_ml.l2 import fit_ranker, slice_report
 from rts_ml.serp_l2 import MODEL_COLUMNS, model_matrix, ndcg_per_group
 from rts_ml.serp_l2_dcn import fit_dcn, packed_ndcg, score
 from rts_ml.serp_l2_model import SerpLgbmRanker, SerpRanker

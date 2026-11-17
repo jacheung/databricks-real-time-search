@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from rts_ml.qac_l2 import _log_gap, _share
+from rts_ml import l2
 
 # Feature View names (`rts_shared.features`, 30-minute / 30-day / 7-day windows).
 COUNTS = ("sess_n_clicks_30m", "sess_n_carts_30m", "sess_n_searches_30m", "user_n_clicks_30d", "user_n_carts_30d",
@@ -31,15 +31,7 @@ MODEL_COLUMNS = (*COUNTS, *(f"log_{c}" for c in PRICES), "sess_std_price_30m",
 
 def add_crosses(df: pd.DataFrame) -> pd.DataFrame:
     """The candidate x session/user features; returns a copy with the cross columns added (gaps NaN if missing)."""
-    out = df.copy()
-    out["sess_cat_share"] = _share(df["sess_cat_cnt_30m"], df["sess_n_clicks_30m"], df["sess_n_carts_30m"])
-    out["user_cat_share"] = _share(df["user_cat_cnt_30d"], df["user_n_clicks_30d"], df["user_n_carts_30d"])
-    # Nulls never match: a session with no engaged event, or a product with no brand.
-    out["cat_is_last"] = (df["category"].notna() & (df["category"] == df["sess_last_category"])).astype(int)
-    out["brand_is_last"] = (df["brand"].notna() & (df["brand"] == df["sess_last_brand"])).astype(int)
-    for gap, reference in GAPS.items():
-        out[gap] = _log_gap(df["price"], df[reference])
-    return out
+    return l2.add_crosses(df, "price", GAPS)
 
 
 def model_matrix(df: pd.DataFrame) -> pd.DataFrame:

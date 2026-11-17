@@ -7,8 +7,8 @@ import pandas as pd
 from rts_shared.config import load_config
 from rts_shared.features import feature_keys
 from rts_shared.retrieval import QAC_L2_REQUEST_COLUMNS
-from rts_ml.qac_l2 import (MODEL_COLUMNS, add_crosses, bootstrap_ci, fit_ranker, model_matrix, rank_metrics, score,
-                           slice_report)
+from rts_ml.l2 import bootstrap_ci, fit_ranker, slice_report
+from rts_ml.qac_l2 import MODEL_COLUMNS, add_crosses, model_matrix, rank_metrics, score
 
 
 def rows(**overrides):
@@ -115,7 +115,7 @@ def searches(n, seed):
 def test_ranker_learns_session_intent_and_beats_the_l1_order():
     train = searches(300, seed=0).sample(frac=1, random_state=0)  # grouping must not rely on row order
     valid, test = searches(100, seed=1), searches(200, seed=2)
-    ranker = fit_ranker(train, valid)
+    ranker = fit_ranker(train, valid, matrix=model_matrix)
     test["l1"], test["l2"] = -test["l1_rank"], score(ranker, test)
     assert rank_metrics(test, "l2")["mrr"].mean() > rank_metrics(test, "l1")["mrr"].mean() + 0.3
 
@@ -125,7 +125,7 @@ def test_saved_model_scores_raw_rows_like_training(tmp_path):
 
     from rts_ml.qac_l2_model import QacRanker
 
-    ranker = fit_ranker(searches(100, seed=0), searches(50, seed=1))
+    ranker = fit_ranker(searches(100, seed=0), searches(50, seed=1), matrix=model_matrix)
     # The endpoint strips the lookup keys before calling the model: it gets features and request fields only.
     test = searches(20, seed=2).drop(columns=["session_id", "user_id"])
     mlflow.pyfunc.save_model(tmp_path / "model", python_model=QacRanker(ranker),
@@ -146,7 +146,8 @@ def test_slice_report_compares_l1_and_l2_overall_and_per_slice():
     df = pd.DataFrame({"group_id": ["a", "a", "b", "b", "c", "c"], "label": [0, 1, 0, 1, 1, 0],
                        "l1": [2, 1, 2, 1, 2, 1], "l2": [1, 2, 1, 2, 2, 1],
                        "is_guest": [1, 1, 1, 1, 0, 0]})
-    report = {(r["slice"], r["value"], r["metric"]): r for r in slice_report(df, ["is_guest"], seed=0)}
+    rows_ = slice_report(df, ["is_guest"], per_group=rank_metrics, metrics=("mrr", "success1"), seed=0)
+    report = {(r["slice"], r["value"], r["metric"]): r for r in rows_}
     overall = report[("all", "all", "success1")]
     assert overall["n"] == 3 and overall["l1"] == 1 / 3 and overall["l2"] == 1.0
     assert math.isclose(overall["lift"], 2 / 3)
