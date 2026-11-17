@@ -45,7 +45,7 @@ from pyspark.sql import functions as F
 _nb_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
 ROOT = "/Workspace" + "/".join(_nb_path.split("/")[:-3])  # this notebook is <ROOT>/ml/notebooks/<name>
 sys.path[:0] = [f"{ROOT}/shared/src", f"{ROOT}/ml/src"]
-from rts_ml.l2_training import search_slices, training_features
+from rts_ml.l2_training import require_unshifted_history, search_slices, training_features
 from rts_ml.serp_l2 import MODEL_COLUMNS, pack_searches
 from rts_ml.serp_l2_training import spine as build_spine
 from rts_shared.config import full_name, load_config
@@ -65,6 +65,7 @@ fe = FeatureEngineeringClient()
 # COMMAND ----------
 
 # DBTITLE 1,Spine: searches x L1 top k, product fields, graded labels (rts_ml.serp_l2_training)
+require_unshifted_history(spark, CFG)
 build_spine(spark, CFG, N, L2["valid_days"], BUCKETS).write.mode("overwrite").option("overwriteSchema", "true") \
     .saveAsTable(SPINE)
 spine = spark.table(SPINE)

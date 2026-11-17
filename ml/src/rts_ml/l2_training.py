@@ -6,7 +6,17 @@ from __future__ import annotations
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
-from rts_shared.config import full_name, table
+from rts_shared.config import full_name, history_shift, table
+
+
+def require_unshifted_history(spark, cfg: dict) -> None:
+    """Fail if `time_shift` moved `session_events` past the labels: training sets over a long spine would compute the
+    user/item features from the shifted history, days off their labels (found 2026-11-17). Rebuild the data first."""
+    latest = lambda name: spark.table(table(cfg, name)).agg(F.max("event_time")).first()[0]  # noqa: E731
+    shift = history_shift(history_last=latest("session_events"), labels_last=latest("qac_impressions"))
+    if shift:
+        raise RuntimeError(f"session_events is shifted {shift} past the labels (time_shift); don't train on it: rebuild "
+                           "the data (teardown_job, then clickstream_job with rebuild_data=true)")
 
 
 def training_features(fe, cfg: dict, lookup_names, request_df, request_columns) -> list:

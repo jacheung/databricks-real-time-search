@@ -186,3 +186,15 @@ def test_demo_personas_name_a_known_category(tmp_path, cfg):
     bad["app"]["demo_personas"][0]["category"] = "Spaceships"
     with pytest.raises(ValueError, match="demo_personas"):
         load_config(write(tmp_path, bad))
+
+
+def test_history_shift_is_how_far_session_events_moved_past_the_labels():
+    # 2026-11-17: time_shift moved session_events +5 days; full-spine training sets then read user/item features 5 days
+    # off their labels (QAC v2 trained on them). The simulator's last event is a search, so unshifted maxima are equal.
+    from datetime import datetime, timedelta
+
+    from rts_shared.config import history_shift
+
+    last_search = datetime(2026, 11, 12, 0, 4, 57, 405000)
+    assert history_shift(history_last=last_search, labels_last=last_search) == timedelta(0)
+    assert history_shift(history_last=last_search + timedelta(days=5), labels_last=last_search) == timedelta(days=5)

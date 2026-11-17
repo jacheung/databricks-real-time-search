@@ -19,7 +19,7 @@ tracks, plus the order to do them in. Branch `architecture`. Each track ticks of
 - **Tests:**
   - Python, from the repo root: `uv run --no-project --with pytest --with pyyaml --with pandas --with numpy --with
     lightgbm --with scikit-learn --with mlflow-skinny --with databricks-sdk --with fastapi --with httpx python -m
-    pytest -q` (213 pass).
+    pytest -q` (214 pass).
   - Torch tests: a separate process with `--with torch ... ml/tests_torch`.
   - Frontend: `cd app/frontend && npm test` (15 pass).
 - **Live checks:** on fevm, profile `fevm-jon`, bundle target `fevm`. The `e2-demo-fe` login has expired.
@@ -204,4 +204,7 @@ with a fake `fetch`. `PAGES` is gone (pages follow the response), and stages are
   2026-10-28 onward) read the pre-shift offline tables (inferred from one user and one item: offline 3 = unshifted
   count 3, full spine 6 = shifted count). QAC v2 (registered today, not deployed) trained on the shifted features;
   nothing in QAC checked. Not an FE bug and not #5. Diagnostic: `real-time-search/scratch/serp_l2_parity_diag`.
+  Done 2026-11-17: QAC v2 deleted (v1 serves); `rts_ml.l2_training.require_unshifted_history` (pure part
+  `rts_shared.config.history_shift`, tested) stops both training notebooks first; live on fevm it fails with
+  "shifted 5 days". Still open (the user's call: not now): rebuild the data before the next retrain.
 - [ ] data: `clickstream_sim.py:90` redefines the required event fields instead of importing `REQUIRED_FIELDS`.

@@ -53,7 +53,7 @@ ROOT = "/Workspace" + "/".join(_nb_path.split("/")[:-3])  # this notebook is <RO
 sys.path[:0] = [f"{ROOT}/shared/src", f"{ROOT}/ml/src"]
 from rts_ml.l2 import fit_ranker, slice_report
 from rts_ml import qac_l2_training as qac_training
-from rts_ml.l2_training import search_slices, training_features
+from rts_ml.l2_training import require_unshifted_history, search_slices, training_features
 from rts_ml.qac_l2 import CROSSES, MODEL_COLUMNS, fit_valid_split, model_matrix, rank_metrics, score
 from rts_ml.qac_l2_model import QacRanker
 from rts_shared.config import load_config, model_name, resolve_auto
@@ -78,6 +78,7 @@ assert not missing, f"model columns not provided by any feature (window suffixes
 # COMMAND ----------
 
 # DBTITLE 1,Spine: searches x typed prefixes x L1 candidates (rts_ml.qac_l2_training)
+require_unshifted_history(spark, CFG)
 searches = qac_training.searches(spark, CFG)
 train_searches = qac_training.sample(searches, "train", L2["train_searches"])
 test_searches = qac_training.sample(searches, "test", L2["eval_searches"])
