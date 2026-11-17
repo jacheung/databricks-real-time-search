@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useQac, useSearch } from "./search.js";
 
 const L2_STATUS = {
   not_deployed: "L2 not deployed: showing the L1 order",
@@ -6,7 +7,6 @@ const L2_STATUS = {
   timeout: "L2 timed out: showing the L1 order",
   error: "L2 failed: showing the L1 order",
 };
-const QAC_FAILED = "Suggestions failed";
 
 // How L2 moved an item vs the L1 column: "new" if it came from below L1's shown top `shown`.
 function rankChange(c, position, shown) {
@@ -91,7 +91,6 @@ const round1 = (ms) => Math.round(ms * 10) / 10;
 // Fixed keystroke axis (~120 ms measured at the 20 ms debounce), so bar lengths compare across keystrokes. Slower
 // keystrokes clip at full width with the real ms in the rows.
 const SCREEN_SCALE_MS = 160;
-const STAGE_KEYS = ["fs-kafka", "fs-rtm", "fs-lakebase", "fs-read"];
 
 // A bar with its total, then one row per segment: colour key, name, where the time comes from, ms.
 function Breakdown({ title, measures, segments, rows, total, totalClass, scale, budget, markerLabel, footer }) {
@@ -120,17 +119,19 @@ function Breakdown({ title, measures, segments, rows, total, totalClass, scale, 
   );
 }
 
-// Rows are fixed and shown before there is anything to time, so filling them in never moves the layout.
+// Rows are fixed and shown before there is anything to time, so filling them in never moves the layout. Names match
+// the server's stages (freshness_breakdown in rts_app.service).
 const STAGES = [
-  ["Kafka write", "app"],
-  ["Real-Time Mode read + computed", "pipeline · output_time"],
-  ["Lakebase write", "pipeline · commit_time"],
-  ["App read every feature", "app · Lakebase"],
+  ["Kafka write", "app", "fs-kafka"],
+  ["Real-Time Mode read + computed", "pipeline · output_time", "fs-rtm"],
+  ["Lakebase write", "pipeline · commit_time", "fs-lakebase"],
+  ["App read every feature", "app · Lakebase", "fs-read"],
 ];
 const EMPTY = "–";
 
 function ClickstreamBar({ session, freshness, scale }) {
   const ready = freshness?.status === "ready";
+  const ms = Object.fromEntries((ready ? freshness.stages : []).map((g) => [g.name, g.ms]));
   const footer = !session
     ? "Play a clickstream to time how fast its events reach the session features."
     : ready
@@ -143,9 +144,9 @@ function ClickstreamBar({ session, freshness, scale }) {
   return (
     <Breakdown
       title="Clickstream → features"
-      segments={ready ? freshness.stages.map((g, i) => ({ key: STAGE_KEYS[i], label: g.name, ms: Math.max(g.ms, 0) })) : []}
-      rows={STAGES.map(([name, source], i) => ({ key: STAGE_KEYS[i], name, source,
-                                                 ms: ready ? `${Math.round(freshness.stages[i].ms)} ms` : EMPTY }))}
+      segments={STAGES.filter(([name]) => name in ms).map(([name, , key]) => ({ key, label: name, ms: Math.max(ms[name], 0) }))}
+      rows={STAGES.map(([name, source, key]) => ({ key, name, source,
+                                                   ms: name in ms ? `${Math.round(ms[name])} ms` : EMPTY }))}
       total={ready ? `${Math.round(freshness.total_ms)} ms` : EMPTY}
       scale={scale}
       footer={footer}
@@ -609,8 +610,7 @@ const SERP_VIEWS = {
   l2: ["L1 + L2", "DCNv2 reranks all L1 hits with session, user and item features"],
 };
 
-const PAGE_SIZE = 10;
-const PAGES = 4; // the server sends 4 pages; the "…" after them is decoration
+const PAGE_SIZE = 10; // the server sends a few pages' worth; the "…" after them is decoration
 
 // A move up from another L1 page says which, so L2 lifting an item from deep in L1 shows.
 function pagedChange(ch, l1Rank, page) {
@@ -628,7 +628,7 @@ function ResultGrid({ serp, intent }) {
   const view = l2ok ? picked : "l1";
   const all = view === "l2" ? serp.l2.items : serp.l1;
   const allChanges = all.map((h, i) => (view === "l2" ? rankChange(h, i + 1, serp.l1.length) : null));
-  const pages = Math.min(PAGES, Math.ceil(all.length / PAGE_SIZE));
+  const pages = Math.ceil(all.length / PAGE_SIZE);
   const start = page * PAGE_SIZE;
   const items = all.slice(start, start + PAGE_SIZE);
   const changes = allChanges.slice(start, start + PAGE_SIZE).map((ch, i) => pagedChange(ch, items[i].l1_rank, page));
@@ -698,18 +698,19 @@ export default function App() {
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState(null);
   const [q, setQ] = useState("");
-  const [result, setResult] = useState(null);
-  const [e2e, setE2e] = useState(null);
   const [open, setOpen] = useState(false); // the QAC dropdown
   const [active, setActive] = useState(-1); // its ↑/↓ row in Session-aware, -1 for none
-  const [serp, setSerp] = useState(null);
-  const [searching, setSearching] = useState(false);
-  const [serpE2e, setSerpE2e] = useState(null);
   const [hoodOpen, setHoodOpen] = useState(() => window.innerWidth >= 1440); // open where it fits beside the store (see .page.hood-open)
-  const latestSearch = useRef(0);
   const input = useRef(null);
-  const latest = useRef(0);
   const keyAt = useRef(null); // event timestamp of the last keystroke, on performance.now()'s clock
+  const sessionId = session?.session_id ?? null;
+  const { result, e2e, error: qacError } = useQac({ q, sessionId, userId, debounceMs: cfg.qac_debounce_ms, keyAt });
+  const { serp, e2e: serpE2e, searching, error: searchError, run, clear: clearSearch } =
+    useSearch({ sessionId, userId });
+  function runSearch(text) {
+    setError(null); // a new search clears a failed replay's message, as its own error clears in the hook
+    run(text);
+  }
 
   useEffect(() => {
     fetch("/api/config").then((r) => r.json()).then(setCfg);
@@ -724,27 +725,6 @@ export default function App() {
     fetch("/api/trending").then((r) => (r.ok ? r.json() : [])).then((t) => setTrending(t.map((x) => x.query)))
       .catch(() => {});
   }, []);
-
-  useEffect(() => {
-    const seq = ++latest.current;
-    const pressed = keyAt.current; // null when a new session, not a keystroke, refetched: nothing to time
-    keyAt.current = null;
-    const t = setTimeout(() => {
-      const sent = performance.now();
-      const params = new URLSearchParams({ q });
-      if (session) params.set("session_id", session.session_id);
-      if (userId) params.set("user_id", userId);
-      fetch(`/api/qac?${params}`)
-        .then((r) => (r.ok ? r.json() : r.text().then((t) => Promise.reject(new Error(t)))))
-        .then((res) => {
-          if (seq !== latest.current) return; // drop responses to older keystrokes
-          setResult({ ...res, clock: pressed === null ? null : { pressed, sent, received: performance.now() } });
-          setError((e) => (e?.startsWith(QAC_FAILED) ? null : e)); // the next good keystroke clears its own error
-        })
-        .catch((e) => seq === latest.current && setError(`${QAC_FAILED}: ${e.message}`));
-    }, cfg.qac_debounce_ms);
-    return () => clearTimeout(t);
-  }, [q, session, userId, cfg.qac_debounce_ms]);
 
   // "No clickstream" (an empty id) drops the replayed session: QAC and search run as a shopper with no session history.
   function chooseScenario(id) {
@@ -767,40 +747,6 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
-    const c = result?.clock;
-    if (!c) return;
-    let frame = requestAnimationFrame(() => {
-      frame = requestAnimationFrame(() => {
-        const painted = performance.now();
-        const t = result.timings_ms;
-        const server = t.l1 + (t.l2 ?? 0);
-        const debounce = c.sent - c.pressed;
-        setE2e({ debounce, network: Math.max(0, c.received - c.sent - server), server,
-                 render: painted - c.received, total: painted - c.pressed,
-                 l1: t.l1, l2: t.l2, status: result.l2?.status, request_id: result.request_id, prefix: result.prefix });
-      });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [result]);
-
-  // Like the keystroke bar: wait two frames so the results are painted before stopping the clock.
-  useEffect(() => {
-    const c = serp?.clock;
-    if (!c) return;
-    let frame = requestAnimationFrame(() => {
-      frame = requestAnimationFrame(() => {
-        const painted = performance.now();
-        const t = serp.timings_ms;
-        const server = t.embed + t.search + (t.l2 ?? 0);
-        setSerpE2e({ network: Math.max(0, c.received - c.sent - server), embed: t.embed, search: t.search, l2: t.l2,
-                     render: painted - c.received, total: painted - c.sent, status: serp.l2?.status,
-                     hits: serp.hits, embedding: serp.embedding });
-      });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [serp]);
-
   const freshness = useFreshness(session);
   const userFeatures = useUserFeatures(userId);
   const l1 = result?.l1 ?? [];
@@ -810,41 +756,6 @@ export default function App() {
   const recent = recentSearches(session);
   const zeroQuery = recent.length ? { title: "Your recent searches", pills: recent } : { title: "Trending now", pills: trending };
   const zeroOpen = open && !q.trim() && zeroQuery.pills.length > 0;
-
-  // Searches with the current session, so L2 sees the same features QAC did; a newer search drops older responses.
-  function runSearch(text) {
-    if (!text.trim()) return;
-    const seq = ++latestSearch.current;
-    const params = new URLSearchParams({ q: text });
-    if (session) params.set("session_id", session.session_id);
-    if (userId) params.set("user_id", userId);
-    setSearching(true);
-    setError(null);
-    const sent = performance.now(); // no debounce: the search starts on the Enter or pick itself
-    fetch(`/api/search?${params}`)
-      .then((r) => (r.ok ? r.json() : r.text().then((t) => Promise.reject(new Error(t)))))
-      .then((res) => seq === latestSearch.current && setSerp({ ...res, clock: { sent, received: performance.now() } }))
-      .catch((e) => seq === latestSearch.current && setError(`Search failed: ${e.message}`))
-      .finally(() => seq === latestSearch.current && setSearching(false));
-  }
-
-  // Signing in or out re-runs the current search, as a store's reload after login would (QAC refetches on its own:
-  // userId is in its effect). Neither is a keystroke, so neither is timed.
-  const signedInOnce = useRef(false);
-  useEffect(() => {
-    if (!signedInOnce.current) {
-      signedInOnce.current = true;
-      return;
-    }
-    if (serp) runSearch(serp.query);
-  }, [userId]);
-
-  // Clearing the clickstream re-runs the current search too, so its L2 order no longer uses the old session.
-  const hadSession = useRef(false);
-  useEffect(() => {
-    if (hadSession.current && !session && serp) runSearch(serp.query);
-    hadSession.current = !!session;
-  }, [session]);
 
   // Picking a completion fills the box, closes the dropdown and searches (it isn't a keystroke, so it isn't timed).
   function pick(completion) {
@@ -872,14 +783,11 @@ export default function App() {
   // The logo goes "home": clear the query and results without a reload, so the replayed session stays.
   function goHome(e) {
     e.preventDefault();
-    latestSearch.current++; // drop an in-flight search
+    clearSearch(); // also drops an in-flight search
     keyAt.current = null; // clearing the box is not a keystroke to time
     setQ("");
     setActive(-1);
     setOpen(false);
-    setSerp(null);
-    setSerpE2e(null);
-    setSearching(false);
     setError(null);
   }
 
@@ -965,7 +873,7 @@ export default function App() {
         </div>
         {logo}
         {searchBox}
-        {error && <p className="error">{error}</p>}
+        {(error ?? searchError ?? qacError) && <p className="error">{error ?? searchError ?? qacError}</p>}
 
         {!serp && (
           <>

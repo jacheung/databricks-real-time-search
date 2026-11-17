@@ -26,7 +26,7 @@ candidates rewrite code inside every track, so they land before the track work s
 **Phase 2: one track at a time in the `architecture` worktree (decided 2026-11-17: live checks serialize anyway).
 Order: app, then ml, then data. Originally: one worktree per track, branched from `main`, in parallel.** PLAN.md's track worktree names
 (`databricks-blueprints-rts-app`/`-ml`) predate the repo split: reuse them and merge `main` if they still exist.
-- app: bug commits (done), then #3 (done), then #4. Live on fevm 2026-11-17 (app bundle, `bundle run rts_app`):
+- app: bug commits (done), then #3 (done), then #4 (done; not yet deployed). Live on fevm 2026-11-17 (app bundle, `bundle run rts_app`):
   every route 200, QAC L2 36 ms, SERP L2 96 ms, Play → freshness ready in 820 ms, persona check ok for all three.
   Browser check of the UI (QAC error message) still to do.
 - ml: bug commits, then #5 and #6.
@@ -97,7 +97,9 @@ timeout would nearly always fail), and its SERP L1 now goes through `search()` w
   fakes built from `test_service.py`'s); `main.py` shrinks to wiring.
 - Benefits: the freshness loop, the real timeout path, 404/503 paths and the persona check become testable.
 
-**#4 QAC and SERP fetching and timing in `App.jsx`**
+**#4 QAC and SERP fetching and timing in `App.jsx`** (done 2026-11-17). `useQac` and `useSearch` in
+`src/search.js` own fetch, stale-response drops, errors and timing (`qacTiming` / `serpTiming`); Vitest covers them
+with a fake `fetch`. `PAGES` is gone (pages follow the response), and stages are matched by name.
 - Problem: stale-response handling written twice; QAC has no error path; server timings re-summed in four places;
   `PAGES = 4` must match `SERP_N / PAGE_SIZE`; stage names matched by index; no frontend tests.
 - Solution: one hook per surface returning result, status and timings; rendering only reads them.

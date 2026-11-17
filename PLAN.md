@@ -151,7 +151,7 @@ Checked by tests, not by sessions agreeing. Change one only under rule 1.
 ## How we work
 - Tests first for local logic, from this folder: `uv run --no-project --with pytest --with pyyaml --with pandas --with numpy
   --with lightgbm --with scikit-learn --with mlflow-skinny --with databricks-sdk --with fastapi --with httpx python -m pytest -q`
-  (204 pass, 2026-11-17).
+  (204 pass, 2026-11-17). Frontend: `cd app/frontend && npm test` (Vitest: the QAC and SERP hooks in `src/search.js`).
 - Deploy and run per bundle: `cd data && databricks bundle deploy -t dev -p e2-demo-fe`, then
   `databricks bundle run <job> -t dev -p e2-demo-fe [--params k=v]` (`--no-wait` for long runs). Read results from
   `dbutils.notebook.exit` JSON with `jobs get-run-output <task run_id>`.
