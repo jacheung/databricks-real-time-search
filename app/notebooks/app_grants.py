@@ -30,6 +30,7 @@ _nb_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().not
 ROOT = "/Workspace" + "/".join(_nb_path.split("/")[:-3])  # this notebook is <ROOT>/app/notebooks/<name>
 sys.path[:0] = [f"{ROOT}/shared/src"]
 from rts_shared.config import load_config
+from rts_shared.features import online_table_prefix
 from rts_shared.lakebase import connect, features_database
 
 from databricks.sdk import WorkspaceClient
@@ -41,9 +42,10 @@ w = WorkspaceClient()
 role = w.apps.get(name=dbutils.widgets.get("app_name")).service_principal_client_id
 schema = CFG["unity_catalog"]["schema"]
 synced = [CFG["tables"][k] for k in ("qac_prefix_online", "demo_scenarios_online", "demo_personas_online")]
-# The session Feature Views' online tables carry a generated suffix (rts_session_online_<suffix>).
+# The session Feature Views' online tables carry a generated suffix (<online_table_prefix>_<suffix>).
 SESSION_TABLES = "SELECT relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace " \
-                 "WHERE n.nspname = :s AND c.relkind IN ('r', 'p') AND relname LIKE 'rts_session_online%'"
+                 "WHERE n.nspname = :s AND c.relkind IN ('r', 'p') AND relname LIKE :p"
+SESSION_PREFIX = f"{online_table_prefix('session')}%"
 
 # COMMAND ----------
 
@@ -55,7 +57,8 @@ for database in (CFG["lakebase"]["database"], features_database(CFG)):
         conn.run(f'GRANT USAGE ON SCHEMA "{schema}" TO "{role}"')
         conn.run(f'GRANT SELECT ON ALL TABLES IN SCHEMA "{schema}" TO "{role}"')
         conn.run(f'ALTER DEFAULT PRIVILEGES IN SCHEMA "{schema}" GRANT SELECT ON TABLES TO "{role}"')
-        tables = synced if database == CFG["lakebase"]["database"] else [r[0] for r in conn.run(SESSION_TABLES, s=schema)]
+        tables = (synced if database == CFG["lakebase"]["database"]
+                  else [r[0] for r in conn.run(SESSION_TABLES, s=schema, p=SESSION_PREFIX)])
         assert tables, f"no tables to check in {database}.{schema}"
         granted |= {f"{database}.{t}": conn.run("SELECT has_table_privilege(:r, :t, 'SELECT')", r=role,
                                                   t=f'"{schema}"."{t}"')[0][0] for t in tables}

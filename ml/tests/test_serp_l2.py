@@ -1,12 +1,25 @@
 import math
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from rts_shared.config import load_config
+from rts_shared.features import feature_keys
+from rts_shared.retrieval import SERP_L2_REQUEST_COLUMNS
 from rts_ml.qac_l2 import fit_ranker, slice_report
 from rts_ml.serp_l2 import MODEL_COLUMNS, add_crosses, model_matrix, ndcg_per_group, pack_group
 from serp_l2_data import NO_HISTORY, rows, searches
+
+
+def test_the_model_reads_only_what_the_endpoint_provides():
+    # The endpoint looks up every catalog feature (session, user, item) and passes the request columns through; the
+    # model's input columns are literals, so a renamed or re-windowed feature must fail here, not at serving.
+    cfg = load_config(str(Path(__file__).resolve().parents[2] / "shared" / "configs" / "example.yml"))
+    provided = [*feature_keys(cfg), *SERP_L2_REQUEST_COLUMNS]
+    assert not set(provided) - set(rows().columns)  # the fixture covers everything provided
+    assert list(model_matrix(rows()[provided]).columns) == list(MODEL_COLUMNS)
 
 
 def test_crosses_match_the_candidate_to_the_session_and_user():

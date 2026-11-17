@@ -1,8 +1,12 @@
 import math
 import random
+from pathlib import Path
 
 import pandas as pd
 
+from rts_shared.config import load_config
+from rts_shared.features import feature_keys
+from rts_shared.retrieval import QAC_L2_REQUEST_COLUMNS
 from rts_ml.qac_l2 import (MODEL_COLUMNS, add_crosses, bootstrap_ci, fit_ranker, model_matrix, rank_metrics, score,
                            slice_report)
 
@@ -18,6 +22,16 @@ def rows(**overrides):
            "sess_last_category": "Camera & Photo", "sess_last_brand": "canon", "sess_last_event_type": "click",
            "user_n_clicks_30d": 8, "user_n_carts_30d": 2, "user_cat_cnt_30d": 5, "user_median_price_30d": 100.0}
     return pd.DataFrame([row | overrides])
+
+
+def test_the_model_reads_only_what_the_endpoint_provides():
+    # The endpoint looks up the catalog's session and user features and passes the request columns through; the
+    # model's input columns are literals, so a renamed or re-windowed feature must fail here, not at serving.
+    cfg = load_config(str(Path(__file__).resolve().parents[2] / "shared" / "configs" / "example.yml"))
+    looked_up = [n for n, keys in feature_keys(cfg).items() if keys[0] in ("session_id", "user_id")]
+    provided = [*looked_up, *QAC_L2_REQUEST_COLUMNS]
+    assert not set(provided) - set(rows().columns)  # the fixture covers everything provided
+    assert list(model_matrix(rows()[provided]).columns) == list(MODEL_COLUMNS)
 
 
 def test_category_shares_are_the_candidate_category_share_of_engaged_events():

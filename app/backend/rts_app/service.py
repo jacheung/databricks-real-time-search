@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from rts_shared.events import event_payload
-from rts_shared.features import feature_keys
+from rts_shared.features import ENGAGED_EVENTS, feature_keys, feature_specs
 from rts_shared.retrieval import QAC_L2_REQUEST_COLUMNS, filter_completions, lookup_prefix
 from rts_shared.scenarios import replay
 
@@ -140,7 +140,7 @@ def play_scenario(scenario: dict, session_id: str, producer, topic: str, now: da
     table's timestamps time that event. The rest is sent and flushed first, untimed; the last event is then stamped
     at send time (`clock`) and sent alone, so the Kafka write is one event's, not the whole replay's."""
     events = replay(json.loads(scenario["events"]), session_id, scenario["user_id"], now)
-    engaged = [i for i, e in enumerate(events) if e["event_type"] in ENGAGED]
+    engaged = [i for i, e in enumerate(events) if e["event_type"] in ENGAGED_EVENTS]
     if engaged:
         events = events[:engaged[-1] + 1]
     for e in events[:-1]:
@@ -164,8 +164,6 @@ def scenario_timeline(events: list[dict]) -> list[dict]:
              **{f: e[f] for f in ("event_type", "query", "product_id", "category", "brand", "price")}} for e in events]
 
 
-ENGAGED = ("click", "add_to_cart")
-# The session Feature Views' online tables, each named by a feature only it holds (data/src/rts_data/feature_specs.py).
 def l2_inputs(cfg: dict) -> dict[str, list[str]]:
     """What the QAC L2 endpoint receives, by source: session features from the Kafka stream, user features from the
     hourly Delta batch, and the candidate fields the app sends. Item features aren't QAC L2 inputs."""
@@ -186,15 +184,19 @@ def user_feature_values(table_rows: list[list[dict]]) -> list[dict]:
     return out
 
 
-SESSION_TABLES = {"window": "sess_n_clicks_30m", "category": "sess_cat_cnt_30m", "last": "sess_last_event_type"}
-WINDOW_FEATURES = ("sess_n_searches_30m", "sess_n_clicks_30m", "sess_n_carts_30m", "sess_avg_price_30m",
-                   "sess_min_price_30m", "sess_max_price_30m", "sess_std_price_30m")
-LAST_FEATURES = ("sess_last_event_type", "sess_last_brand", "sess_last_category", "sess_last_price")
+def session_features(cfg: dict) -> dict[str, list[str]]:
+    """The session features by the online table that holds them (`window`, `category`, `last`), in catalog order.
+    Each table is found by a feature only it holds."""
+    out = {}
+    for s in feature_specs(cfg):
+        if s.group == "session":
+            out.setdefault(s.kind, []).append(s.name)
+    return out
 
 
 def expected_session_features(events: list[dict]) -> dict:
     """What each session table holds once every replayed event has landed, as the online tables show it."""
-    engaged = [e for e in events if e["event_type"] in ENGAGED]
+    engaged = [e for e in events if e["event_type"] in ENGAGED_EVENTS]
     categories = {}
     for e in engaged:
         if e["category"]:
@@ -232,10 +234,12 @@ def landed(table: str, expected: dict, rows: list[dict], last_event_time: dateti
             and (price is None or abs((row["sess_last_price"] or 0) - price) < 1e-3))
 
 
-def freshness_breakdown(seen: dict, last_event_time: datetime, kafka_ack_ms: float) -> dict:
+def freshness_breakdown(seen: dict, last_event_time: datetime, kafka_ack_ms: float,
+                        features: dict[str, list[str]]) -> dict:
     """Per-stage and per-feature freshness once every table has landed. `seen[table]` holds its rows and when the
     app first read them complete. Replayed events keep their simulated event_time but are all produced at Play, so
-    every offset is from the last event, the only one whose event_time is the real produce time."""
+    every offset is from the last event, the only one whose event_time is the real produce time. `features`:
+    `session_features`."""
     def since(t):
         return round((t - last_event_time).total_seconds() * 1000, 1)
 
@@ -255,18 +259,18 @@ def freshness_breakdown(seen: dict, last_event_time: datetime, kafka_ack_ms: flo
     for name, source, at in points:
         stages.append({"name": name, "source": source, "ms": round(max(0.0, at - prev), 1)})
         prev = max(prev, at)
-    features = []
-    for table, names in (("window", WINDOW_FEATURES), ("last", LAST_FEATURES)):
+    out = []
+    for table in ("window", "last"):
         rows, at = seen[table]["rows"], seen[table]["detected_at"]
-        features += [{"feature": n, "table": table, "value": rows[0].get(n),
-                      "in_lakebase_ms": since(newest(rows, "commit_time")), "served_ms": since(at)} for n in names]
-    at = seen["category"]["detected_at"]
+        out += [{"feature": n, "table": table, "value": rows[0].get(n),
+                 "in_lakebase_ms": since(newest(rows, "commit_time")), "served_ms": since(at)} for n in features[table]]
+    at, (cat,) = seen["category"]["detected_at"], features["category"]
     # A category the timed click didn't touch was committed with the untimed rest of the replay: no offset to show.
-    features += [{"feature": f"sess_cat_cnt_30m[{r['category']}]", "table": "category", "value": r["sess_cat_cnt_30m"],
-                  **({"in_lakebase_ms": since(r["commit_time"]), "served_ms": since(at)}
-                     if r["commit_time"] >= last_event_time else {"in_lakebase_ms": None, "served_ms": None})}
-                 for r in sorted(seen["category"]["rows"], key=lambda r: -r["sess_cat_cnt_30m"])]
-    return {"total_ms": total, "stages": stages, "features": features}
+    out += [{"feature": f"{cat}[{r['category']}]", "table": "category", "value": r[cat],
+             **({"in_lakebase_ms": since(r["commit_time"]), "served_ms": since(at)}
+                if r["commit_time"] >= last_event_time else {"in_lakebase_ms": None, "served_ms": None})}
+            for r in sorted(seen["category"]["rows"], key=lambda r: -r[cat])]
+    return {"total_ms": total, "stages": stages, "features": out}
 
 
 class RecentValues:

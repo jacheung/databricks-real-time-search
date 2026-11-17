@@ -6,10 +6,11 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from rts_app.service import (index_query, latency_stats, play_scenario, qac, rows_to_dicts, scenario_timeline, search,
-                             expected_session_features, freshness_breakdown, l2_inputs, landed, time_calls,
-                             user_feature_values, with_timeout, RecentValues)
+                             expected_session_features, freshness_breakdown, l2_inputs, landed, session_features,
+                             time_calls, user_feature_values, with_timeout, RecentValues)
 from rts_app.service import persona_lift, ranked_top, trending
 from rts_shared.events import EVENT_FIELDS
+from rts_shared.features import feature_keys
 
 TABLE = {
     "ca": [{"rank": 1, "completion": "camera"}, {"rank": 2, "completion": "camera bag"}, {"rank": 3, "completion": "cat food"}],
@@ -332,7 +333,7 @@ def test_freshness_breakdown_stages_end_at_timestamps_and_never_go_negative():
     seen = {k: {"rows": [{**WINDOW, "event_time": T0, "output_time": ms(30), "commit_time": ms(90),
                           "category": "Toys", "sess_cat_cnt_30m": 1}], "detected_at": ms(112)}
             for k in ("window", "category", "last")}
-    out = freshness_breakdown(seen, last_event_time=T0, kafka_ack_ms=55.0)
+    out = freshness_breakdown(seen, T0, kafka_ack_ms=55.0, features=session_features(CFG))
     assert [g["ms"] for g in out["stages"]] == [55.0, 0.0, 35.0, 22.0]
     assert sum(g["ms"] for g in out["stages"]) == out["total_ms"] == 112.0
 
@@ -348,7 +349,7 @@ def test_freshness_breakdown_splits_the_clicks_feature_into_stages_and_times_eve
                      "detected_at": ms(54)},
         "last": {"rows": [{"sess_last_event_type": "click", "commit_time": ms(44)}], "detected_at": ms(60)},
     }
-    out = freshness_breakdown(seen, last_event_time=T0, kafka_ack_ms=3.0)
+    out = freshness_breakdown(seen, last_event_time=T0, kafka_ack_ms=3.0, features=session_features(CFG))
     assert out["total_ms"] == 60.0  # until the app had read every table
     assert out["stages"] == [
         {"name": "Kafka write", "source": "app", "ms": 3.0},
@@ -364,6 +365,8 @@ def test_freshness_breakdown_splits_the_clicks_feature_into_stages_and_times_eve
     assert by_name["sess_cat_cnt_30m[Toys]"]["in_lakebase_ms"] == 42.0
     assert by_name["sess_cat_cnt_30m[Electronics]"]["served_ms"] == 54.0
     assert by_name["sess_last_event_type"]["in_lakebase_ms"] == 44.0
+    session = [n for n, keys in feature_keys(CFG).items() if keys[0] == "session_id"]
+    assert {n.split("[")[0] for n in by_name} == set(session)  # every session feature, named as in the catalog
 
 
 def test_category_rows_from_earlier_events_have_no_offset():
@@ -373,7 +376,7 @@ def test_category_rows_from_earlier_events_have_no_offset():
     seen["category"] = {"rows": [{"category": "Toys", "sess_cat_cnt_30m": 1, "event_time": T0, "commit_time": ms(42)},
                                  {"category": "Electronics", "sess_cat_cnt_30m": 2, "event_time": ms(-9000),
                                   "commit_time": ms(-480)}], "detected_at": ms(54)}
-    by_name = {f["feature"]: f for f in freshness_breakdown(seen, T0, 3.0)["features"]}
+    by_name = {f["feature"]: f for f in freshness_breakdown(seen, T0, 3.0, session_features(CFG))["features"]}
     assert by_name["sess_cat_cnt_30m[Electronics]"]["in_lakebase_ms"] is None
     assert by_name["sess_cat_cnt_30m[Electronics]"]["served_ms"] is None
     assert by_name["sess_cat_cnt_30m[Toys]"]["in_lakebase_ms"] == 42.0
@@ -397,6 +400,21 @@ def test_l2_inputs_group_what_the_qac_endpoint_receives_by_source():
     assert all(f.startswith("sess_") for f in groups["stream"]) and all(f.startswith("user_") for f in groups["batch"])
     assert "l1_rank" in groups["request"] and "is_guest" in groups["request"]
     assert not any(f.startswith("item_") for g in groups.values() for f in g)  # QAC L2 doesn't read item features
+
+
+def test_session_features_by_online_table_follow_the_catalog():
+    tables = session_features(CFG)
+    assert tables["window"] == ["sess_n_clicks_30m", "sess_n_carts_30m", "sess_n_searches_30m", "sess_avg_price_30m",
+                                "sess_min_price_30m", "sess_max_price_30m", "sess_std_price_30m"]
+    assert tables["category"] == ["sess_cat_cnt_30m"]
+    assert tables["last"] == ["sess_last_category", "sess_last_brand", "sess_last_price", "sess_last_event_type"]
+
+
+def test_expected_session_features_are_named_as_in_the_catalog():
+    # The expected values restate what each feature counts; their names must still be the catalog's.
+    expected = expected_session_features(EVENTS)
+    tables = session_features(CFG)
+    assert {*expected["window"], *expected["last"]} <= {*tables["window"], *tables["last"]}
 
 
 def test_user_feature_values_drop_keys_and_list_categories_by_count():

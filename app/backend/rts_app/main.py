@@ -30,9 +30,10 @@ from psycopg_pool import ConnectionPool
 
 from rts_app.service import (latency_stats, play_scenario, qac, rows_to_dicts, scenario_timeline, search,
                              expected_session_features, freshness_breakdown, l2_inputs, landed, time_calls,
-                             user_feature_values, with_timeout, RecentValues, SESSION_TABLES, persona_lift, ranked_top,
-                             trending, index_query)
+                             user_feature_values, with_timeout, RecentValues, session_features, persona_lift,
+                             ranked_top, trending, index_query)
 from rts_shared.config import full_name, load_config
+from rts_shared.features import online_table_prefix
 from rts_shared.kafka import producer as kafka_producer
 from rts_shared.lakebase import branch, features_database
 from rts_shared.retrieval import SERP_INDEX_COLUMNS, SERP_INDEX_TEXT, qac_l2_records, serp_l2_records
@@ -52,6 +53,7 @@ SCHEMA = CFG["unity_catalog"]["schema"]
 QAC_N = 10
 SERP_N = 40  # 4 UI pages of 10; L2 reranks every L1 hit either way, so paging needs no extra call
 L2_INPUTS = l2_inputs(CFG)
+SESSION_FEATURES = session_features(CFG)
 w = WorkspaceClient()
 
 _endpoint = next(e for e in w.postgres.list_endpoints(parent=branch(CFG))
@@ -168,11 +170,12 @@ def _online_tables(prefix: str, columns: dict[str, str], cache: dict) -> dict[st
 
 
 def session_tables() -> dict[str, str]:
-    return _online_tables("rts_session_online", SESSION_TABLES, _session_tables)
+    return _online_tables(online_table_prefix("session"), {k: names[0] for k, names in SESSION_FEATURES.items()},
+                          _session_tables)
 
 
 def user_tables() -> dict[str, str]:
-    return _online_tables("rts_user_online", {f: f for f in L2_INPUTS["batch"]}, _user_tables)
+    return _online_tables(online_table_prefix("user"), {f: f for f in L2_INPUTS["batch"]}, _user_tables)
 
 
 def scenarios() -> dict[str, dict]:
@@ -373,7 +376,8 @@ def freshness(session_id: str):
             time.sleep(FRESHNESS_POLL_S)
     if len(seen) < len(tables):
         return {"status": "timeout", "landed": sorted(seen), "waited_s": FRESHNESS_GIVE_UP_S}
-    return {"status": "ready"} | freshness_breakdown(seen, played["last_event_time"], played["kafka_ack_ms"])
+    return {"status": "ready"} | freshness_breakdown(seen, played["last_event_time"], played["kafka_ack_ms"],
+                                                 SESSION_FEATURES)
 
 
 @app.get("/api/users/{user_id}/features")

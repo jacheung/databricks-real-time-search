@@ -74,7 +74,7 @@ scripts/  pre_demo.sh (+ pre_demo_checks.py) brings everything up and checks it;
 | Contract | Owner | Consumers | Enforced by |
 |---|---|---|---|
 | Event schema and topic (`rts_shared.events`, `kafka.topic`) | data | app (produces), ml (trains) | `session_events` DDL and the Kafka payload schema are both generated from `EVENT_FIELDS` |
-| Feature catalog (`rts_shared.features`: names and lookup keys) | data | ml | `data/tests/test_feature_specs.py` asserts the feature specs match it exactly |
+| Feature catalog (`rts_shared.features`: every feature's definition, lookup keys and online table) | data | ml, app | `shared/tests/test_features.py` pins every name and key; ml and app tests check their literals against it |
 | Demo scenarios (`rts_shared.scenarios`) | data | app | `SCENARIO_COLUMNS` and `replay`, tested |
 | Retrieval outputs (`rts_shared.retrieval`: prefix table, index columns) | ml | app | `QAC_PREFIX_COLUMNS`, `SERP_INDEX_COLUMNS`, tested |
 | L2 endpoint inputs | ml | app | `QAC_L2_REQUEST_COLUMNS`, `qac_l2_records`, `serp_l2_records`, tested |
