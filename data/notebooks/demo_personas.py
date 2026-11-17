@@ -38,6 +38,7 @@ from pyspark.sql import functions as F
 _nb_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
 ROOT = "/Workspace" + "/".join(_nb_path.split("/")[:-3])  # this notebook is <ROOT>/data/notebooks/<name>
 sys.path[:0] = [f"{ROOT}/shared/src", f"{ROOT}/data/src"]
+from rts_data.demo import live_offline_views
 from rts_shared.config import load_config, table
 from rts_shared.lakebase import sync_snapshot
 from rts_shared.scenarios import PERSONA_COLUMNS, pick_personas
@@ -55,9 +56,7 @@ UC = CFG["unity_catalog"]
 # DBTITLE 1,User features: latest values
 # The user Feature Views' offline tables carry a generated suffix; find each one by the feature column it holds.
 views = [r["tableName"] for r in spark.sql(f"SHOW TABLES IN {UC['catalog']}.{UC['schema']} LIKE 'rts_user_offline_*_latest_view'").collect()]
-# Deleting a materialization drops its offline table but leaves this view behind (2026-11-10): skip the orphans.
-views = [v for v in views
-         if spark.catalog.tableExists(f"{UC['catalog']}.{UC['schema']}.{v.removesuffix('_latest_view')}")]
+views = live_offline_views(views, exists=lambda t: spark.catalog.tableExists(f"{UC['catalog']}.{UC['schema']}.{t}"))
 by_feature = {}
 for v in views:
     name = f"{UC['catalog']}.{UC['schema']}.{v}"
