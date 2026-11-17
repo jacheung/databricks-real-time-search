@@ -9,7 +9,7 @@ tracks, plus the order to do them in. Branch `architecture`. Each track ticks of
 - **Where things are:** phase 1 (#1, #2) and the app track (bugs, #3, #4) are merged into `main` and pushed
   (`6624409`). Work happens in the worktree `~/GitHub/databricks-real-time-search-arch` on branch `architecture`
   (at `main` plus this note). One track at a time, in this worktree only.
-- **Next:** the ml track (bugs, #6, #5) is done on `architecture`, unmerged. Open: training on time-shifted history (Bugs) blocks
+- **Next:** the ml track (bugs, #6, #5) is merged into `main` and pushed (`8bb07cd`, 2026-11-17). Open: training on time-shifted history (Bugs) blocks
   retraining on fevm until the data is rebuilt. QAC v2 is registered, not deployed (v1 serves). Then data: the
   `clickstream_sim` bug, then #8.
 - **How we work (agreed with the user):**
