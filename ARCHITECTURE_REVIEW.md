@@ -65,7 +65,7 @@ Order: app, then ml, then data. Originally: one worktree per track, branched fro
 - app: bug commits (done), then #3 (done), then #4 (done; not yet deployed). Live on fevm 2026-11-17 (app bundle, `bundle run rts_app`):
   every route 200, QAC L2 36 ms, SERP L2 96 ms, Play → freshness ready in 820 ms, persona check ok for all three.
   Browser check of the UI (QAC error message) still to do.
-- ml: bug commits, then #5 and #6.
+- ml: bug commits (done), #6 (done), then #5.
 - data: bug commits, then #8.
 
 **Bugs:** each is its own commit in its track's worktree, before that track's refactor, test first (so it ships even if
@@ -161,6 +161,11 @@ with a fake `fetch`. `PAGES` is gone (pages follow the response), and stages are
   is written three times.
 - Solution: one module takes this run's model and the config and makes the endpoint match.
 - Benefits: `test_serving.py`'s fakes cover the whole interface.
+- Done (2026-11-17). Decided: `rts_ml.serving.deploy(w, block, model_name, version)` builds the served entity from
+  config, ensures, waits and checks the served version; both endpoint notebooks call it. A `route_optimized` mismatch
+  raises (it can't change in place; recreating means L2 downtime). The three wait loops stay separate: they poll
+  different resources and states. Lines: `serving.py` 56 → 76, `l2_endpoint.py` 82 → 66, `serp_query_embedding.py`
+  73 → 59 (net −10). Live on fevm: `--only` QAC L2 and query embedding both "unchanged".
 
 ### data
 

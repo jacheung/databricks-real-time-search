@@ -1,30 +1,35 @@
 from types import SimpleNamespace
 
+import pytest
 from databricks.sdk.service.serving import ServingModelWorkloadType
 
-from rts_ml.serving import ensure_endpoint, version_to_serve
+from rts_ml.serving import deploy, ensure_endpoint, version_to_serve
 
 
 class FakeEndpoints:
-    def __init__(self, serving=None, first_deploy=None):
+    def __init__(self, serving=None, first_deploy=None, route_optimized=True):
         # serving: the served entity (see `entity`) or None.
         # first_deploy: the endpoint exists but never got a config: "UPDATE_FAILED" or "IN_PROGRESS".
-        self.serving, self.first_deploy, self.calls = serving, first_deploy, []
+        self.serving, self.first_deploy, self.route_optimized, self.calls = serving, first_deploy, route_optimized, []
 
     def list(self):
         return [SimpleNamespace(name="ep")] if self.serving or self.first_deploy else []
 
     def get(self, name):
         if self.first_deploy:
-            return SimpleNamespace(config=None,
+            return SimpleNamespace(config=None, route_optimized=self.route_optimized,
                                    state=SimpleNamespace(config_update=SimpleNamespace(value=self.first_deploy)))
-        return SimpleNamespace(config=SimpleNamespace(served_entities=[self.serving]))
+        ready = SimpleNamespace(ready=SimpleNamespace(value="READY"), config_update=SimpleNamespace(value="NOT_UPDATING"))
+        return SimpleNamespace(config=SimpleNamespace(served_entities=[self.serving]), state=ready,
+                               route_optimized=self.route_optimized, endpoint_url=f"https://host/{name}")
 
     def create(self, name, config, route_optimized):
         self.calls.append(("create", name, route_optimized))
+        self.serving, self.first_deploy, self.route_optimized = config.served_entities[0], None, route_optimized
 
     def update_config(self, name, served_entities):
         self.calls.append(("update", name))
+        self.serving = served_entities[0]
 
     def delete(self, name):
         self.calls.append(("delete", name))
@@ -100,3 +105,31 @@ def test_serves_this_runs_version_even_when_a_later_one_exists():
 def test_serves_the_latest_version_when_the_endpoint_task_runs_alone():
     # pre_demo.sh runs the endpoint tasks with --only: the training task didn't run, so there's no task value.
     assert version_to_serve(registry(2, 10, 9), "main.s.model", "") == "10"
+
+
+def test_refuses_to_change_route_optimization_in_place():
+    # route_optimized is fixed when the endpoint is created; changing it means deleting the endpoint (L2 goes down).
+    w = SimpleNamespace(serving_endpoints=FakeEndpoints(serving=entity("2"), route_optimized=False))
+    with pytest.raises(ValueError, match="route_optimized"):
+        ensure_endpoint(w, "ep", entity("2"), route_optimized=True)
+    assert w.serving_endpoints.calls == []
+
+
+BLOCK = {"endpoint": "ep", "route_optimized": True, "workload_type": "GPU_SMALL", "workload_size": "Small",
+         "scale_to_zero_enabled": False}
+
+
+def test_deploy_serves_the_version_with_the_configured_workload():
+    w = SimpleNamespace(serving_endpoints=FakeEndpoints(serving=entity("1")))
+    summary = deploy(w, BLOCK, "main.s.model", "2")
+    served = w.serving_endpoints.serving
+    assert (served.entity_version, served.workload_type, served.workload_size, served.scale_to_zero_enabled) == \
+        ("2", ServingModelWorkloadType.GPU_SMALL, "Small", False)
+    assert summary == {"endpoint": "ep", "model": "main.s.model", "version": "2", "action": "updated",
+                       "route_optimized": True, "url": "https://host/ep"}
+
+
+def test_deploy_creates_a_missing_endpoint_route_optimized_from_config():
+    w = SimpleNamespace(serving_endpoints=FakeEndpoints())
+    assert deploy(w, {**BLOCK, "route_optimized": False}, "main.s.model", "2")["action"] == "created"
+    assert w.serving_endpoints.calls == [("create", "ep", False)]

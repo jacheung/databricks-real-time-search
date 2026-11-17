@@ -37,11 +37,10 @@ import sys
 _nb_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
 ROOT = "/Workspace" + "/".join(_nb_path.split("/")[:-3])  # this notebook is <ROOT>/ml/notebooks/<name>
 sys.path[:0] = [f"{ROOT}/shared/src", f"{ROOT}/ml/src"]
-from rts_ml.serving import ensure_endpoint, version_to_serve, wait_ready
+from rts_ml.serving import deploy, version_to_serve
 from rts_shared.config import full_name, load_config, model_name
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.serving import ServedEntityInput, ServingModelWorkloadType
 
 dbutils.widgets.text("config_path", f"{ROOT}/shared/configs/dev.yml")  # jobs pass configs/<bundle target>.yml
 dbutils.widgets.dropdown("model_key", "qac_l2", ["qac_l2", "serp_l2"])
@@ -55,28 +54,13 @@ if VARIANT:
     assert KEY == "serp_l2", f"variant {VARIANT!r} exists only for serp_l2"
     L2 = {**L2, **L2[VARIANT]}  # its own name, endpoint and workload; route optimization etc. from serp_l2
     MODEL_NAME = full_name(CFG, L2["registered_name"])
-ENDPOINT = L2["endpoint"]
 w = WorkspaceClient()
 
 # COMMAND ----------
 
-# DBTITLE 1,Create or update the endpoint (this run's model version)
+# DBTITLE 1,Serve this run's model version; check: ready and serving it
 run_version = dbutils.jobs.taskValues.get(taskKey=TRAIN_TASK, key=f"{VARIANT}_version" if VARIANT else "version",
                                          default="", debugValue="") if TRAIN_TASK else ""
-version = version_to_serve(w, MODEL_NAME, run_version)
-entity = ServedEntityInput(entity_name=MODEL_NAME, entity_version=version, workload_size=L2["workload_size"],
-                           workload_type=ServingModelWorkloadType(L2["workload_type"]),
-                           scale_to_zero_enabled=L2["scale_to_zero_enabled"])
-print(ENDPOINT, ensure_endpoint(w, ENDPOINT, entity, route_optimized=L2["route_optimized"]))
-
-# COMMAND ----------
-
-# DBTITLE 1,Check: ready and serving that version
-endpoint = wait_ready(w, ENDPOINT)  # model + feature-lookup images can take 20+ minutes to build
-served = [(s.entity_name, s.entity_version) for s in endpoint.config.served_entities]
-assert served == [(MODEL_NAME, version)], f"{ENDPOINT} serves {served}, expected {MODEL_NAME} v{version}"
-
-summary = {"endpoint": ENDPOINT, "model": MODEL_NAME, "version": version, "route_optimized": endpoint.route_optimized,
-           "url": endpoint.endpoint_url}
+summary = deploy(w, L2, MODEL_NAME, version_to_serve(w, MODEL_NAME, run_version))
 print(json.dumps(summary, indent=2))
 dbutils.notebook.exit(json.dumps(summary))

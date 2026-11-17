@@ -4,7 +4,24 @@ from __future__ import annotations
 
 import time
 
-from databricks.sdk.service.serving import EndpointCoreConfigInput
+from databricks.sdk.service.serving import EndpointCoreConfigInput, ServedEntityInput, ServingModelWorkloadType
+
+
+def deploy(w, block: dict, model_name: str, version: str) -> dict:
+    """Serve `model_name` v`version` on `block["endpoint"]` with the block's workload type and size, scale-to-zero and
+    route optimization; waits until it's ready and returns a summary."""
+    name = block["endpoint"]
+    entity = ServedEntityInput(entity_name=model_name, entity_version=version, workload_size=block["workload_size"],
+                               workload_type=ServingModelWorkloadType(block["workload_type"]),
+                               scale_to_zero_enabled=block["scale_to_zero_enabled"])
+    action = ensure_endpoint(w, name, entity, route_optimized=block["route_optimized"])
+    print(name, action)
+    endpoint = wait_ready(w, name)  # model + feature-lookup images can take 20+ minutes to build
+    served = [(s.entity_name, s.entity_version) for s in endpoint.config.served_entities]
+    if served != [(model_name, version)]:
+        raise RuntimeError(f"{name} serves {served}, expected {model_name} v{version}")
+    return {"endpoint": name, "model": model_name, "version": version, "action": action,
+            "route_optimized": endpoint.route_optimized, "url": endpoint.endpoint_url}
 
 
 def ensure_endpoint(w, name: str, entity, route_optimized: bool) -> str:
@@ -24,6 +41,9 @@ def ensure_endpoint(w, name: str, entity, route_optimized: bool) -> str:
         # endpoints were left like this.
         w.serving_endpoints.delete(name)
         return create()
+    if bool(endpoint.route_optimized) != route_optimized:
+        raise ValueError(f"{name} has route_optimized={endpoint.route_optimized}, config says {route_optimized}; it "
+                         "can't change in place: delete the endpoint (L2 falls back to L1 order) and rerun")
     served = endpoint.config.served_entities or []
     # scale_to_zero too: e2-demo-fe's cleanup bot turns it on overnight, and cold starts time L2 out.
     key = lambda s: (s.entity_name, s.entity_version, s.workload_type, s.workload_size,  # noqa: E731

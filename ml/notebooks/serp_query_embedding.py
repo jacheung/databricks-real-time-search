@@ -38,36 +38,22 @@ import sys
 _nb_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
 ROOT = "/Workspace" + "/".join(_nb_path.split("/")[:-3])  # this notebook is <ROOT>/ml/notebooks/<name>
 sys.path[:0] = [f"{ROOT}/shared/src", f"{ROOT}/ml/src"]
-from rts_ml.serving import ensure_endpoint, version_to_serve, wait_ready
+from rts_ml.serving import deploy, version_to_serve
 from rts_shared.config import load_config, model_name
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.serving import ServedEntityInput, ServingModelWorkloadType
 
 dbutils.widgets.text("config_path", f"{ROOT}/shared/configs/dev.yml")  # jobs pass configs/<bundle target>.yml
 CFG = load_config(dbutils.widgets.get("config_path"))
 QE = CFG["models"]["query_embedding"]
-MODEL_NAME, ENDPOINT = model_name(CFG, "query_embedding"), QE["endpoint"]
+MODEL_NAME = model_name(CFG, "query_embedding")
 w = WorkspaceClient()
 
 # COMMAND ----------
 
-# DBTITLE 1,Create or update the endpoint
-VERSION = version_to_serve(w, MODEL_NAME, dbutils.jobs.taskValues.get(taskKey="query_embedding_model", key="version",
+# DBTITLE 1,Serve this run's model version; check: ready and serving it (Express deployment: ~5 min, no image build)
+version = version_to_serve(w, MODEL_NAME, dbutils.jobs.taskValues.get(taskKey="query_embedding_model", key="version",
                                                                     default="", debugValue=""))
-entity = ServedEntityInput(entity_name=MODEL_NAME, entity_version=VERSION, workload_size=QE["workload_size"],
-                           workload_type=ServingModelWorkloadType(QE["workload_type"]),
-                           scale_to_zero_enabled=QE["scale_to_zero_enabled"])
-print(ENDPOINT, ensure_endpoint(w, ENDPOINT, entity, route_optimized=QE["route_optimized"]))
-
-# COMMAND ----------
-
-# DBTITLE 1,Check: ready and serving that version
-endpoint = wait_ready(w, ENDPOINT)  # Express deployment: ~5 min (no image build)
-served = [(s.entity_name, s.entity_version) for s in endpoint.config.served_entities]
-assert served == [(MODEL_NAME, VERSION)], f"{ENDPOINT} serves {served}, expected {MODEL_NAME} v{VERSION}"
-
-summary = {"endpoint": ENDPOINT, "model": MODEL_NAME, "version": VERSION, "workload_type": QE["workload_type"],
-           "route_optimized": endpoint.route_optimized, "url": endpoint.endpoint_url}
+summary = {**deploy(w, QE, MODEL_NAME, version), "workload_type": QE["workload_type"]}
 print(json.dumps(summary, indent=2))
 dbutils.notebook.exit(json.dumps(summary))
