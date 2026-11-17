@@ -9,7 +9,6 @@ so startup warms them in the background.
 from __future__ import annotations
 
 import itertools
-import itertools
 import logging
 import os
 import random
