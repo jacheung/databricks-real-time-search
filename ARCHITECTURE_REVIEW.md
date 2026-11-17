@@ -26,7 +26,7 @@ candidates rewrite code inside every track, so they land before the track work s
 **Phase 2: one track at a time in the `architecture` worktree (decided 2026-11-17: live checks serialize anyway).
 Order: app, then ml, then data. Originally: one worktree per track, branched from `main`, in parallel.** PLAN.md's track worktree names
 (`databricks-blueprints-rts-app`/`-ml`) predate the repo split: reuse them and merge `main` if they still exist.
-- app: bug commits, then #3, then #4.
+- app: bug commits (done), then #3 (done), then #4.
 - ml: bug commits, then #5 and #6.
 - data: bug commits, then #8.
 
@@ -81,7 +81,11 @@ reasons below stop holding.**
 
 ### app
 
-**#3 Request handling in `main.py`**
+**#3 Request handling in `main.py`** (done 2026-11-17). `create_app(backend, cfg)` in `rts_app/app.py` holds every
+route; `Backend` (14 methods: Lakebase reads, serving, AI Search, Kafka) is the seam, with `rts_app/clients.py` as
+the real adapter and an in-memory fake in `app/tests/test_app.py`. QAC and SERP each get their own L2 pool. The
+persona check stays synchronous and off the pools without timeouts (it checks lift; ~150 calls at QAC's 36 ms
+timeout would nearly always fail), and its SERP L1 now goes through `search()` with the embed fallback.
 - Files: `app/backend/rts_app/main.py` (no tests), `app/backend/rts_app/service.py`, `app/tests/test_service.py`.
 - Problem: importing `main.py` creates a `WorkspaceClient`, lists Lakebase endpoints, opens pools and starts a thread,
   so it can't be tested. `check_personas` rebuilds SERP L1 and calls L2 with no timeout (~38 × (1 + personas) calls).
