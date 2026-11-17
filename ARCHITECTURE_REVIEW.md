@@ -207,4 +207,4 @@ with a fake `fetch`. `PAGES` is gone (pages follow the response), and stages are
   Done 2026-11-17: QAC v2 deleted (v1 serves); `rts_ml.l2_training.require_unshifted_history` (pure part
   `rts_shared.config.history_shift`, tested) stops both training notebooks first; live on fevm it fails with
   "shifted 5 days". Still open (the user's call: not now): rebuild the data before the next retrain.
-- [ ] data: `clickstream_sim.py:90` redefines the required event fields instead of importing `REQUIRED_FIELDS`.
+- [x] data: `clickstream_sim.py:90` redefines the required event fields instead of importing `REQUIRED_FIELDS`.

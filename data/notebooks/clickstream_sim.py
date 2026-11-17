@@ -48,7 +48,7 @@ ROOT = "/Workspace" + "/".join(_nb_path.split("/")[:-3])  # this notebook is <RO
 sys.path[:0] = [f"{ROOT}/shared/src", f"{ROOT}/data/src"]
 from rts_data.datagen import Catalog, intent_lift, intent_lift_problems, simulate
 from rts_shared.config import category_medians, load_config, sim_dates, table
-from rts_shared.events import EVENT_FIELDS
+from rts_shared.events import EVENT_FIELDS, REQUIRED_FIELDS
 
 dbutils.widgets.text("config_path", f"{ROOT}/shared/configs/dev.yml")  # jobs pass configs/<bundle target>.yml
 dbutils.widgets.dropdown("rebuild_data", "false", ["false", "true"])  # replace an existing session_events
@@ -87,8 +87,7 @@ events.event_type.value_counts()
 # DBTITLE 1,Write session_events (schema shared with the Kafka payload)
 SESSION_EVENTS = table(CFG, "session_events")
 EVENT_COLUMNS = [name for name, _ in EVENT_FIELDS]
-REQUIRED = {"session_id", "event_id", "event_time", "event_type"}
-columns = ", ".join(f"{n} {t.upper()}{' NOT NULL' if n in REQUIRED else ''}" for n, t in EVENT_FIELDS)
+columns = ", ".join(f"{n} {t.upper()}{' NOT NULL' if n in REQUIRED_FIELDS else ''}" for n, t in EVENT_FIELDS)
 spark.sql(f"CREATE OR REPLACE TABLE {SESSION_EVENTS} ({columns}) TBLPROPERTIES (delta.enableChangeDataFeed = true)")
 (spark.createDataFrame(events[EVENT_COLUMNS])
  .withColumn("query_id", F.col("query_id").cast("bigint"))
