@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from databricks.sdk.service.serving import ServingModelWorkloadType
 
-from rts_ml.serving import ensure_endpoint
+from rts_ml.serving import ensure_endpoint, version_to_serve
 
 
 class FakeEndpoints:
@@ -85,3 +85,18 @@ def test_leaves_a_first_deploy_in_progress_to_wait_ready():
     w = SimpleNamespace(serving_endpoints=FakeEndpoints(first_deploy="IN_PROGRESS"))
     assert ensure_endpoint(w, "ep", entity("2"), route_optimized=True) == "unchanged"
     assert w.serving_endpoints.calls == []
+
+
+def registry(*versions):
+    return SimpleNamespace(model_versions=SimpleNamespace(
+        list=lambda full_name: [SimpleNamespace(version=v) for v in versions]))
+
+
+def test_serves_this_runs_version_even_when_a_later_one_exists():
+    # A later version (another run, or a manual registration) must not be deployed in place of this run's.
+    assert version_to_serve(registry(1, 2, 3), "main.s.model", "2") == "2"
+
+
+def test_serves_the_latest_version_when_the_endpoint_task_runs_alone():
+    # pre_demo.sh runs the endpoint tasks with --only: the training task didn't run, so there's no task value.
+    assert version_to_serve(registry(2, 10, 9), "main.s.model", "") == "10"

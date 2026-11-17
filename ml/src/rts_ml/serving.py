@@ -34,6 +34,16 @@ def ensure_endpoint(w, name: str, entity, route_optimized: bool) -> str:
     return "updated"
 
 
+def version_to_serve(w, model_name: str, version: str) -> str:
+    """`version` (this run's, a task value from its training task), or the latest registered one when the endpoint task
+    runs alone (`--only`, as `scripts/pre_demo.sh` does)."""
+    if version:
+        return version
+    latest = str(max(int(v.version) for v in w.model_versions.list(full_name=model_name)))
+    print(f"No version from a training task in this run: serving the latest, {model_name} v{latest}")
+    return latest
+
+
 def wait_ready(w, name: str, polls: int = 80, interval_s: int = 30):
     """Bounded wait (serverless sessions can outlive long blocking calls); returns the ready endpoint."""
     for _ in range(polls):

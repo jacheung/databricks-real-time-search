@@ -181,5 +181,8 @@ with a fake `fetch`. `PAGES` is gone (pages follow the response), and stages are
 - [x] app: QAC doesn't check the endpoint returned one score per candidate. `service.py:38`. Fixed by #2.
 - [x] app: QAC fetch has no error path; a 500 body is stored as the result and the render throws. `App.jsx:736-741`.
 - [x] ml: `ensure_endpoint` ignores workload size and type. `serving.py:27-30`.
-- [ ] ml: `l2_endpoint` deploys the highest registered version, not this run's. `l2_endpoint.py:62`.
+- [x] ml: `l2_endpoint` deploys the highest registered version, not this run's. `l2_endpoint.py:62`.
+  Decided (2026-11-17): training tasks set task value `version` (`lgbm_version`); endpoint tasks read it from
+  `train_task` with `default=""` and serve the latest when run alone. Same fix in `serp_query_embedding`. Live on
+  fevm: `--only qac_l2_endpoint` fell back to v1, "unchanged". The task-value path itself runs on the next retrain.
 - [ ] data: `clickstream_sim.py:90` redefines the required event fields instead of importing `REQUIRED_FIELDS`.

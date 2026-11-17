@@ -3,7 +3,8 @@
 # MAGIC %md
 # MAGIC # L2: serving endpoint (QAC or SERP)
 # MAGIC
-# MAGIC Serves the latest version of `models.<model_key>.registered_name` on `models.<model_key>.endpoint`
+# MAGIC Serves the version this job run registered (a task value from `train_task`; the latest registered version when
+# MAGIC this task runs alone) of `models.<model_key>.registered_name` on `models.<model_key>.endpoint`
 # MAGIC (route-optimized, workload type and size from config). `variant=lgbm` serves the SERP LightGBM comparator from
 # MAGIC `models.serp_l2.lgbm` instead (CPU, for the latency comparison). The models were logged with `fe.log_model`, so
 # MAGIC the endpoint looks up the session (Kafka stream), user and item (Delta) features in the online store itself;
@@ -13,7 +14,7 @@
 # MAGIC accept only OAuth tokens, which notebook credentials can't provide. The app (its service principal uses OAuth)
 # MAGIC and a local SDK client (CLI OAuth login) can query it.
 # MAGIC
-# MAGIC Reruns are safe: an endpoint already serving the latest version is reused. The endpoint bills while it exists
+# MAGIC Reruns are safe: an endpoint already serving that version is reused. The endpoint bills while it exists
 # MAGIC (`scale_to_zero_enabled` from config).
 # MAGIC
 # MAGIC **Compute:** Serverless, environment version 4+.
@@ -36,7 +37,7 @@ import sys
 _nb_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
 ROOT = "/Workspace" + "/".join(_nb_path.split("/")[:-3])  # this notebook is <ROOT>/ml/notebooks/<name>
 sys.path[:0] = [f"{ROOT}/shared/src", f"{ROOT}/ml/src"]
-from rts_ml.serving import ensure_endpoint, wait_ready
+from rts_ml.serving import ensure_endpoint, version_to_serve, wait_ready
 from rts_shared.config import full_name, load_config, model_name
 
 from databricks.sdk import WorkspaceClient
@@ -45,8 +46,9 @@ from databricks.sdk.service.serving import ServedEntityInput, ServingModelWorklo
 dbutils.widgets.text("config_path", f"{ROOT}/shared/configs/dev.yml")  # jobs pass configs/<bundle target>.yml
 dbutils.widgets.dropdown("model_key", "qac_l2", ["qac_l2", "serp_l2"])
 dbutils.widgets.dropdown("variant", "", ["", "lgbm"])  # lgbm: the SERP LightGBM comparator
+dbutils.widgets.text("train_task", "")  # the job task that registered the model; empty: serve the latest version
 CFG = load_config(dbutils.widgets.get("config_path"))
-KEY, VARIANT = dbutils.widgets.get("model_key"), dbutils.widgets.get("variant")
+KEY, VARIANT, TRAIN_TASK = (dbutils.widgets.get(k) for k in ("model_key", "variant", "train_task"))
 L2 = CFG["models"][KEY]
 MODEL_NAME = model_name(CFG, KEY)
 if VARIANT:
@@ -58,8 +60,10 @@ w = WorkspaceClient()
 
 # COMMAND ----------
 
-# DBTITLE 1,Create or update the endpoint (latest model version)
-version = str(max(int(v.version) for v in w.model_versions.list(full_name=MODEL_NAME)))
+# DBTITLE 1,Create or update the endpoint (this run's model version)
+run_version = dbutils.jobs.taskValues.get(taskKey=TRAIN_TASK, key=f"{VARIANT}_version" if VARIANT else "version",
+                                         default="", debugValue="") if TRAIN_TASK else ""
+version = version_to_serve(w, MODEL_NAME, run_version)
 entity = ServedEntityInput(entity_name=MODEL_NAME, entity_version=version, workload_size=L2["workload_size"],
                            workload_type=ServingModelWorkloadType(L2["workload_type"]),
                            scale_to_zero_enabled=L2["scale_to_zero_enabled"])
@@ -67,7 +71,7 @@ print(ENDPOINT, ensure_endpoint(w, ENDPOINT, entity, route_optimized=L2["route_o
 
 # COMMAND ----------
 
-# DBTITLE 1,Check: ready and serving the latest version
+# DBTITLE 1,Check: ready and serving that version
 endpoint = wait_ready(w, ENDPOINT)  # model + feature-lookup images can take 20+ minutes to build
 served = [(s.entity_name, s.entity_version) for s in endpoint.config.served_entities]
 assert served == [(MODEL_NAME, version)], f"{ENDPOINT} serves {served}, expected {MODEL_NAME} v{version}"

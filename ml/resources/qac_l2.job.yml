@@ -24,3 +24,4 @@ resources:
             notebook_path: ../notebooks/l2_endpoint.py
             base_parameters:
               model_key: qac_l2
+              train_task: qac_l2_lgbm

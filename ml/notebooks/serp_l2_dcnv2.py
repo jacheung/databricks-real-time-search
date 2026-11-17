@@ -220,6 +220,8 @@ def run_version(name):
 
 version, lgbm_version = run_version(MODEL_NAME), run_version(LGBM_NAME)
 print(f"{MODEL_NAME} v{version}, {LGBM_NAME} v{lgbm_version} (run {run.info.run_id})")
+dbutils.jobs.taskValues.set("version", str(version))  # the endpoint tasks serve these versions
+dbutils.jobs.taskValues.set("lgbm_version", str(lgbm_version))
 
 # COMMAND ----------
 

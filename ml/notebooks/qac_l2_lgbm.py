@@ -211,6 +211,7 @@ with mlflow.start_run(run_name="qac_l2_lgbm") as run:
 version = max(int(v.version) for v in mlflow.MlflowClient().search_model_versions(f"name='{MODEL_NAME}'")
               if v.run_id == run.info.run_id)
 print(f"{MODEL_NAME} version {version} (run {run.info.run_id})")
+dbutils.jobs.taskValues.set("version", str(version))  # qac_l2_endpoint serves this version
 
 # COMMAND ----------
 

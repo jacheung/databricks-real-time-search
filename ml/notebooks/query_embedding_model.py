@@ -123,6 +123,7 @@ assert parity["cosine_min"] >= MIN_COSINE and parity["norm_gap_max"] <= MAX_NORM
 version = mlflow.register_model(model_uri=info.model_uri, name=MODEL_NAME,
                                 env_pack=EnvPackConfig(name="databricks_model_serving")).version
 print(f"Registered {MODEL_NAME} v{version} with Express env_pack")
+dbutils.jobs.taskValues.set("version", str(version))  # serp_query_embedding serves this version
 
 # COMMAND ----------
 
