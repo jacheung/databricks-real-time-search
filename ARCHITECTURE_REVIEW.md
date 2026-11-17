@@ -21,9 +21,10 @@ candidates rewrite code inside every track, so they land before the track work s
   app keeps its timing, logging and timeouts around it; both ml benchmarks use it. The column tuples sent to the
   endpoint are unchanged.
 - [x] ~~#7 Event shape~~: dropped (2026-11-17); see #7 below.
-- [ ] Merge into `main` (the user approves this).
+- [x] Merge into `main` (the user approves this). Merged 2026-11-17 (`7323240`), with the QAC L2 load test.
 
-**Phase 2: one worktree per track, branched from `main`, in parallel.** PLAN.md's track worktree names
+**Phase 2: one track at a time in the `architecture` worktree (decided 2026-11-17: live checks serialize anyway).
+Order: app, then ml, then data. Originally: one worktree per track, branched from `main`, in parallel.** PLAN.md's track worktree names
 (`databricks-blueprints-rts-app`/`-ml`) predate the repo split: reuse them and merge `main` if they still exist.
 - app: bug commits, then #3, then #4.
 - ml: bug commits, then #5 and #6.
@@ -130,11 +131,11 @@ reasons below stop holding.**
 
 ## Bugs (fix directly, test first, one commit each)
 
-- [ ] app: `_online_tables` fills its cache key by key, then raises 503 on a later key; the next call returns the
+- [x] app: `_online_tables` fills its cache key by key, then raises 503 on a later key; the next call returns the
   partial cache and freshness raises `KeyError` (500). `main.py:151-167`.
-- [ ] app: `bench_qac_l1` defined twice; `import itertools` twice. `main.py`.
+- [x] app: `bench_qac_l1` defined twice (removed in the load test commit); `import itertools` twice. `main.py`.
 - [x] app: QAC doesn't check the endpoint returned one score per candidate. `service.py:38`. Fixed by #2.
-- [ ] app: QAC fetch has no error path; a 500 body is stored as the result and the render throws. `App.jsx:736-741`.
+- [x] app: QAC fetch has no error path; a 500 body is stored as the result and the render throws. `App.jsx:736-741`.
 - [ ] ml: `ensure_endpoint` ignores workload size and type. `serving.py:27-30`.
 - [ ] ml: `l2_endpoint` deploys the highest registered version, not this run's. `l2_endpoint.py:62`.
 - [ ] data: `clickstream_sim.py:90` redefines the required event fields instead of importing `REQUIRED_FIELDS`.
