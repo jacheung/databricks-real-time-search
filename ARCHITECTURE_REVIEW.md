@@ -26,7 +26,9 @@ candidates rewrite code inside every track, so they land before the track work s
 **Phase 2: one track at a time in the `architecture` worktree (decided 2026-11-17: live checks serialize anyway).
 Order: app, then ml, then data. Originally: one worktree per track, branched from `main`, in parallel.** PLAN.md's track worktree names
 (`databricks-blueprints-rts-app`/`-ml`) predate the repo split: reuse them and merge `main` if they still exist.
-- app: bug commits (done), then #3 (done), then #4.
+- app: bug commits (done), then #3 (done), then #4. Live on fevm 2026-11-17 (app bundle, `bundle run rts_app`):
+  every route 200, QAC L2 36 ms, SERP L2 96 ms, Play → freshness ready in 820 ms, persona check ok for all three.
+  Browser check of the UI (QAC error message) still to do.
 - ml: bug commits, then #5 and #6.
 - data: bug commits, then #8.
 
