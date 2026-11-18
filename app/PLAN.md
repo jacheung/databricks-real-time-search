@@ -42,6 +42,8 @@ home page is now a decorative banner (`brand/hero_banner.py` → `public/hero.sv
     2026-11-17, from its next retrain); the app still shows it.
   - ~~`ensure_endpoint` applies config only on a new model version~~: fixed 2026-11-17, it now compares workload type,
     size and scale-to-zero too (`rts-qac-l2` was found with scale-to-zero on, 2026-11-04).
+- Browser check of the QAC error path (2026-11-17, `useQac`): a failed `/api/qac` shows an error instead of throwing
+  in the render. Tested with Vitest; not yet seen in the browser.
 - Check the app's Lakebase SELECT survives a snapshot re-sync (synced tables may be recreated; default privileges are set).
 - Pay-per-token fallback in `/api/search` (when `rts-query-embedding` fails): kept for now, visible as
   `embedding: fallback_managed`. The user's call whether to fail instead.

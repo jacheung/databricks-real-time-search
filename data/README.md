@@ -45,7 +45,8 @@ impressions and `products`, and the AI Search index from `products`.
   windows end at the current date, so each day more history ages out and personalization fades with no error.
   `time_shift` moves the history to end yesterday.
 - **Don't retrain after a shift.** Only `session_events` moves; the impressions (labels) and `session_events_ingest`
-  keep their dates. To retrain, rebuild first: `teardown_job` with `--params confirm=yes`, then `clickstream_job` with
+  keep their dates, so user/item features would be days off their labels. The ml training notebooks refuse to run on
+  shifted history. To retrain, rebuild first: `teardown_job` with `--params confirm=yes`, then `clickstream_job` with
   `--params rebuild_data=true`.
 - **Don't delete from `session_events` under live streams.** Rebuilding it breaks the materializations reading it, so
   run `teardown_job` first.

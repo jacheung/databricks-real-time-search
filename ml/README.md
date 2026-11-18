@@ -17,11 +17,11 @@ Feature Views this reads, see [data/README.md](../data/README.md).
 | | `serp_l1_ai_search` | `products_search` and the AI Search hybrid index over it |
 | | `query_embedding_model`, `serp_query_embedding` | GTE query embedding model (logged on Serverless GPU), served on a GPU endpoint |
 | `qac_l2_job` | `qac_l2_lgbm` | Training set (search × prefix × L1 top 20), LightGBM LambdaRank, L1 vs L2 eval, registered model |
-| | `qac_l2_endpoint` | Model Serving endpoint `rts-qac-l2` (CPU) |
+| | `qac_l2_endpoint` | Model Serving endpoint `rts-qac-l2` (CPU), serving the version `qac_l2_lgbm` registered in this run (the latest when run alone) |
 | `serp_l2_job` | `serp_l1_candidates` | `serp_l2_searches`, `serp_l1_candidates` (hybrid top 200 per sampled search) |
 | | `serp_l2_training_set` | `serp_l2_spine`, `serp_l2_matrix` (one row per search: candidates × features) |
 | | `serp_l2_dcnv2` | DCNv2 on Serverless GPU (A10), L1 vs L2 eval, registered model |
-| | `serp_l2_endpoint` | Model Serving endpoint `rts-serp-l2` (T4 GPU) |
+| | `serp_l2_endpoint` | Model Serving endpoint `rts-serp-l2` (T4 GPU), serving the version `serp_l2_dcnv2` registered in this run |
 
 ## Evaluation
 
