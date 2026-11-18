@@ -36,11 +36,12 @@ import sys
 from datetime import datetime, timezone
 
 from pyspark.sql import functions as F
-from pyspark.sql.window import Window
 
 _nb_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
 ROOT = "/Workspace" + "/".join(_nb_path.split("/")[:-3])  # this notebook is <ROOT>/data/notebooks/<name>
 sys.path[:0] = [f"{ROOT}/shared/src", f"{ROOT}/data/src"]
+from rts_data.demo import pick_scenarios
+from rts_data.scenarios import session_starts
 from rts_shared.config import load_config, table
 from rts_shared.events import event_payload
 from rts_shared.lakebase import sync_snapshot
@@ -55,56 +56,11 @@ SCENARIOS, ONLINE = table(CFG, "demo_scenarios"), table(CFG, "demo_scenarios_onl
 
 # COMMAND ----------
 
-# DBTITLE 1,Candidate sessions
-sessions = (spark.table(table(CFG, "sim_sessions"))
-            .where("split = 'test' AND intent_brand IS NOT NULL")
-            .select("session_id", "user_id", "intent_category", "intent_brand", "intent_price_target"))
-# user_id comes from sim_sessions (the replay sets it on every event).
-events = (spark.table(table(CFG, "session_events")).drop("user_id")
-          .join(sessions.select("session_id"), "session_id"))
-last_search = (events.where("event_type = 'search'").groupBy("session_id")
-               .agg(F.max_by("query", "event_time").alias("next_query"),
-                    F.max_by("category", "event_time").alias("next_category"), F.max("event_time").alias("cut")))
-before = (events.join(last_search, "session_id").where(F.col("event_time") < F.col("cut"))
-          .join(sessions, "session_id"))
-searches = (before.where("event_type = 'search'")
-            .withColumn("prev_query", F.lag("query").over(Window.partitionBy("session_id").orderBy("event_time"))))
-search_stats = (searches.groupBy("session_id")
-                .agg(F.count_distinct("query").alias("distinct_queries"),
-                     F.count_if(F.col("query") == F.col("prev_query")).alias("repeats"),
-                     F.count_if(F.col("query") == F.col("next_query")).alias("next_seen")))
-candidates = (before.groupBy("session_id", "user_id", "intent_category", "intent_brand", "intent_price_target",
-                             "next_query", "next_category")
-              .agg(F.count_if(F.col("event_type") == "search").alias("searches"),
-                   F.count_if(F.col("event_type") == "click").alias("clicks"),
-                   F.count_if((F.col("event_type") == "click")
-                              & (F.lower("brand") == F.lower("intent_brand"))).alias("brand_clicks"),
-                   F.count_if((F.col("event_type") == "click")
-                              & (F.col("category") == F.col("intent_category"))).alias("category_clicks"))
-              .join(search_stats, "session_id")
-              .where("distinct_queries >= 3 AND repeats = 0 AND next_seen = 0 AND next_category = intent_category "
-                     "AND clicks >= 3 AND brand_clicks >= 1"))
-# The strongest session per (intent category, logged in or not).
-best = (candidates.withColumn("logged_in", F.col("user_id").isNotNull())
-        .withColumn("r", F.row_number().over(Window.partitionBy("intent_category", "logged_in")
-                                             .orderBy(F.desc("brand_clicks"), F.desc("category_clicks"),
-                                                      "session_id")))
-        .where("r = 1").collect())
-
-# Alternate logged-in and guest picks, strongest first, one per intent category.
-pools = {flag: sorted((r for r in best if r["logged_in"] == flag),
-                      key=lambda r: (-r["brand_clicks"], -r["category_clicks"], r["session_id"]))
-         for flag in (True, False)}
-picked, used = [], set()
-while len(picked) < N and any(pools.values()):
-    for flag in (True, False):
-        while pools[flag] and pools[flag][0]["intent_category"] in used:
-            pools[flag].pop(0)
-        if pools[flag] and len(picked) < N:
-            r = pools[flag].pop(0)
-            picked.append(r)
-            used.add(r["intent_category"])
-print(f"{candidates.count()} candidate sessions; picked {len(picked)}")
+# DBTITLE 1,Candidate sessions (rts_data.scenarios) and picks (rts_data.demo.pick_scenarios)
+before, candidates = session_starts(spark, CFG)
+cands = [r.asDict() for r in candidates.collect()]
+picked = pick_scenarios(cands, N)
+print(f"{len(cands)} candidate sessions; picked {len(picked)}")
 
 # COMMAND ----------
 

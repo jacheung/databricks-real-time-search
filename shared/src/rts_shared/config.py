@@ -115,3 +115,13 @@ def window_strength(daily: list[tuple[date, float]]) -> dict:
     latest, best = max(daily), max(s for _, s in daily)
     return {"latest_date": latest[0].isoformat(), "latest": int(latest[1]), "best": int(best),
             "ratio": round(latest[1] / best, 3)}
+
+
+MIN_WINDOW_STRENGTH = 0.95  # latest window vs the best day
+
+
+def stale_batch_features(strength: dict[str, dict], today: date) -> dict[str, dict]:
+    """The user/item Count features (name -> `window_strength`) that aren't current: the latest window must end `today`
+    (UTC, as the materialization cron runs) and hold at least MIN_WINDOW_STRENGTH of the best day."""
+    return {name: s for name, s in strength.items()
+            if s["latest_date"] != today.isoformat() or s["ratio"] < MIN_WINDOW_STRENGTH}

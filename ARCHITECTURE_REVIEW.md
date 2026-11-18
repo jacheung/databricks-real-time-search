@@ -9,9 +9,9 @@ tracks, plus the order to do them in. Branch `architecture`. Each track ticks of
 - **Where things are:** phase 1 (#1, #2) and the app track (bugs, #3, #4) are merged into `main` and pushed
   (`6624409`). Work happens in the worktree `~/GitHub/databricks-real-time-search-arch` on branch `architecture`
   (at `main` plus this note). One track at a time, in this worktree only.
-- **Next:** the ml track (bugs, #6, #5) is done on `architecture`, unmerged. Open: training on time-shifted history (Bugs) blocks
-  retraining on fevm until the data is rebuilt. QAC v2 is registered, not deployed (v1 serves). Then data: the
-  `clickstream_sim` bug, then #8.
+- **Next:** the ml track is merged (`8bb07cd`). The data track (the `clickstream_sim` bug, #8) is done on
+  `architecture`, not merged. Open: training on time-shifted history (Bugs) blocks retraining on fevm until the data
+  is rebuilt. Every candidate in this review is now done or dropped.
 - **How we work (agreed with the user):**
   - Present the design choices before coding, test first, one commit per item.
   - Ask before merging into `main` or pushing. The repo is public.
@@ -19,7 +19,7 @@ tracks, plus the order to do them in. Branch `architecture`. Each track ticks of
 - **Tests:**
   - Python, from the repo root: `uv run --no-project --with pytest --with pyyaml --with pandas --with numpy --with
     lightgbm --with scikit-learn --with mlflow-skinny --with databricks-sdk --with fastapi --with httpx python -m
-    pytest -q` (214 pass).
+    pytest -q` (225 pass).
   - Torch tests: a separate process with `--with torch ... ml/tests_torch`.
   - Frontend: `cd app/frontend && npm test` (15 pass).
 - **Live checks:** on fevm, profile `fevm-jon`, bundle target `fevm`. The `e2-demo-fe` login has expired.
@@ -184,6 +184,14 @@ with a fake `fetch`. `PAGES` is gone (pages follow the response), and stages are
   `time_shift` disagree on "fresh" (UTC vs local date).
 - Solution: selection and freshness rules into `rts_data`; scripts read job names from the bundles or config.
 - Benefits: lower leverage, but it's the code that broke in the online store purge.
+- Done (2026-11-17), unmerged. Decided: a test checks the scripts' job, task and app names against the bundles (no
+  runtime lookup); scenario selection moves to `rts_data` (Spark candidate rules in `rts_data.scenarios`, checked
+  live; the pick in `rts_data.demo`, tested). `rts_data.teardown`: only not-found is absent. One "current batch
+  features" rule (`rts_shared.config.stale_batch_features`, UTC) for `time_shift` and `pre_demo_checks`. Lines:
+  notebooks + `pre_demo_checks` 586 → 508 (−78), `rts_data` 291 → 420 (+129), `rts_shared.config` +10: net +61.
+  Tests 214 → 225. Live on fevm: `demo_job` picked the same 6 scenarios and 3 personas; `time_shift` shifted 0 days,
+  every latest window ends 2026-11-17 at 0.979–0.999; teardown dry run listed 18 features, 18 materializations and
+  the Stream, no errors; `pre_demo_checks`' batch check passes and agrees.
 
 ## Bugs (fix directly, test first, one commit each)
 
@@ -207,4 +215,4 @@ with a fake `fetch`. `PAGES` is gone (pages follow the response), and stages are
   Done 2026-11-17: QAC v2 deleted (v1 serves); `rts_ml.l2_training.require_unshifted_history` (pure part
   `rts_shared.config.history_shift`, tested) stops both training notebooks first; live on fevm it fails with
   "shifted 5 days". Still open (the user's call: not now): rebuild the data before the next retrain.
-- [ ] data: `clickstream_sim.py:90` redefines the required event fields instead of importing `REQUIRED_FIELDS`.
+- [x] data: `clickstream_sim.py:90` redefines the required event fields instead of importing `REQUIRED_FIELDS`.
