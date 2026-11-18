@@ -2,8 +2,9 @@
 
 Top-level plan for this blueprint: the question, how the tracks work together, shared resources, contracts and
 decisions. Each track keeps its own checklist: [data/PLAN.md](data/PLAN.md), [ml/PLAN.md](ml/PLAN.md),
-[app/PLAN.md](app/PLAN.md). Deferred scope lives in [PARKING_LOT.md](PARKING_LOT.md). The architecture review
-(2026-11-17) and its order of work live in [ARCHITECTURE_REVIEW.md](ARCHITECTURE_REVIEW.md).
+[app/PLAN.md](app/PLAN.md). Deferred scope lives in [PARKING_LOT.md](PARKING_LOT.md). An architecture review
+(2026-11-17) deepened the shared contracts and each track; it is merged (`7323240`, `8bb07cd`, `9d389bb`) and its
+open items moved into these plans.
 
 **Question:** Does a session-aware L2 reranker improve QAC and SERP relevance enough to justify its latency, and can
 Databricks serve both within real-time budgets (QAC < 40 ms, SERP < 400 ms, both server-side p95 measured in the app;
@@ -129,8 +130,9 @@ Checked by tests, not by sessions agreeing. Change one only under rule 1.
 | Ask | From | To | State |
 |---|---|---|---|
 | Online table names for the session features (session panel) | app | data | done by the app: found in Postgres database `main` (named after the catalog) via `pg_catalog` |
-| Possible train/serve skew: online `sess_last_event_type` is the last click/cart (2026-11-03: sc1 ends `back`, sc5 `search`, both online `click`), but `feature_specs` defines it over all events. Check what training saw | app | data, ml | ml answered 2026-11-04: training always saw `search` (offline `ColumnSelection` includes the event at the label time; window counts exclude it), so the skew is real. SERP L2 drops the feature; QAC can't be affected (constant in training, LightGBM never split on it). Open for data: intended semantics |
+| Possible train/serve skew: online `sess_last_event_type` is the last click/cart (2026-11-03: sc1 ends `back`, sc5 `search`, both online `click`), but `feature_specs` defines it over all events. Check what training saw | app | data, ml | ml answered 2026-11-04: training always saw `search` (offline `ColumnSelection` includes the event at the label time; window counts exclude it), so the skew is real. SERP L2 drops the feature; QAC dropped it too (2026-11-17, from its next retrain), so neither model reads it. Open for data: intended semantics (the app still shows it) |
 | `rts-qac-l2` session lookups checked from the app via scenario Play | ml | app | open |
+| Rebuild the data before the next retrain (fevm): `time_shift` moved `session_events` +5 days (2026-11-16/17) and the labels didn't move, so `qac_l2_lgbm` and `serp_l2_training_set` now refuse to run (`rts_ml.l2_training.require_unshifted_history`). QAC v2, trained on the shifted features before the guard, was deleted; v1 serves | ml | data | open: `teardown_job --params confirm=yes`, then `clickstream_job --params rebuild_data=true` (takes the demo down) |
 | Wire SERP L2 into `/api/search`: L1 hits → `serp_l2_records` (session, user, candidates) → endpoint under the 200 ms `serp_l2` timeout, falling back to the L1 order. Model: DCNv2 v2 on the T4 (the user, 2026-11-03). `rts-serp-l2` is READY (2026-11-03) | ml | app | done 2026-11-04 (deployed; 200-candidate call from the app still to check in the browser) |
 
 ## Where things are
@@ -151,7 +153,10 @@ Checked by tests, not by sessions agreeing. Change one only under rule 1.
 ## How we work
 - Tests first for local logic, from this folder: `uv run --no-project --with pytest --with pyyaml --with pandas --with numpy
   --with lightgbm --with scikit-learn --with mlflow-skinny --with databricks-sdk --with fastapi --with httpx python -m pytest -q`
-  (204 pass, 2026-11-17). Frontend: `cd app/frontend && npm test` (Vitest: the QAC and SERP hooks in `src/search.js`).
+  (225 pass, 2026-11-17); the torch tests run as a second process (`--with torch ... -m pytest -q ml/tests_torch`, 4
+  pass). Frontend: `cd app/frontend && npm test` (Vitest: the QAC and SERP hooks in `src/search.js`).
+- Spark code in `*/src` (`rts_ml.l2_training`, `rts_ml.{qac,serp}_l2_training`, `rts_data.scenarios`) has no local
+  tests (no JVM); its notebook runs check it.
 - Deploy and run per bundle: `cd data && databricks bundle deploy -t dev -p e2-demo-fe`, then
   `databricks bundle run <job> -t dev -p e2-demo-fe [--params k=v]` (`--no-wait` for long runs). Read results from
   `dbutils.notebook.exit` JSON with `jobs get-run-output <task run_id>`.

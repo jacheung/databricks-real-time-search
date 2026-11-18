@@ -89,8 +89,11 @@ can deploy on its own (and later under its own service principal).
    (public brokers, IAM auth) and a UC service credential: `data/scripts/create_msk.sh` builds both and prints the
    values (~1 h; ~$15/day, and MSK can't be stopped). Workspaces in the same region can share one cluster, each
    with its own topic.
-2. Run the tests from this folder: `uv run --no-project --with pytest --with pyyaml python -m pytest -q`. Every
-   notebook also ends with checks that assert, so a green run means its claim held.
+2. Run the tests from this folder:
+   `uv run --no-project --with pytest --with pyyaml --with pandas --with numpy --with lightgbm --with scikit-learn
+   --with mlflow-skinny --with databricks-sdk --with fastapi --with httpx python -m pytest -q` (the torch tests run
+   separately; see `pyproject.toml`). Every notebook also ends with checks that assert, so a green run means its
+   claim held.
 3. Deploy and run the data bundle:
    ```bash
    cd data
@@ -141,7 +144,8 @@ bundle (re-granting `CAN_QUERY` on recreated endpoints). It ends with `ALL PASS`
 
 Run `demo_job` even if nothing was stopped. The simulated clickstream is fixed, but the user (30-day) and item (7-day)
 feature windows end today, so personalization quietly fades as history ages out. Its first task, `time_shift`, moves
-the history forward to end yesterday. Don't retrain on shifted data; rebuild it first (step 3).
+the history forward to end yesterday. Don't retrain on shifted data; rebuild it first (step 3). The training
+notebooks refuse to run on shifted history.
 
 After the demo, `scripts/post_demo.sh` deletes the serving endpoints (they can't be stopped) and stops the app and both
 pipelines. It keeps the AI Search endpoint: in a busy shared workspace it may not come back if deleted (quota).
