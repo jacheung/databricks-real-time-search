@@ -9,8 +9,8 @@ tracks, plus the order to do them in. Branch `architecture`. Each track ticks of
 - **Where things are:** phase 1 (#1, #2) and the app track (bugs, #3, #4) are merged into `main` and pushed
   (`6624409`). Work happens in the worktree `~/GitHub/databricks-real-time-search-arch` on branch `architecture`
   (at `main` plus this note). One track at a time, in this worktree only.
-- **Next:** the ml track is merged (`8bb07cd`). The data track (the `clickstream_sim` bug, #8) is done on
-  `architecture`, not merged. Open: training on time-shifted history (Bugs) blocks retraining on fevm until the data
+- **Next:** the ml track is merged (`8bb07cd`). The data track (the `clickstream_sim` bug, #8) is merged
+  too (`9d389bb`, 2026-11-17). Open: training on time-shifted history (Bugs) blocks retraining on fevm until the data
   is rebuilt. Every candidate in this review is now done or dropped.
 - **How we work (agreed with the user):**
   - Present the design choices before coding, test first, one commit per item.
